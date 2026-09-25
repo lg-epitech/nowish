@@ -24,10 +24,6 @@ pnpm dev
 
 Postgres runs on port 5433, so it won't fight whatever already lives on 5432.
 
-## Deploy it
-
-Import the repo in Vercel, add a Neon database from the Marketplace, and paste in the Clerk variables from `.env.example`. Migrations run before every build, so a broken schema fails the deploy instead of your users.
-
 ## Check your work
 
 `pnpm check` runs types, lint, tests and a production build. It finishes faster than your shower.
