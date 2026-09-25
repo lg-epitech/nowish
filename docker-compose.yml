@@ -1,0 +1,26 @@
+name: nowish
+
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nowish}
+      POSTGRES_USER: ${POSTGRES_USER:-nowish}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nowish}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - nowish_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  nowish_postgres_data:
