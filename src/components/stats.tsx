@@ -166,16 +166,31 @@ export function TimeSpentSection({
   );
 }
 
-export function TimingSection({ insights, options }: { insights: Insights; options: FormatOptions }) {
-  const { timing, sessionCount } = insights;
+function checkSummary(feels: readonly string[]) {
+  return (["good", "okay", "bad"] as const)
+    .map((feel) => [feel, feels.filter((item) => item === feel).length] as const)
+    .filter(([, count]) => count > 0)
+    .map(([feel, count]) => `${count} ${feel}`)
+    .join(", ");
+}
 
-  if (sessionCount < 2) return null;
+export function TimingSection({ insights, options }: { insights: Insights; options: FormatOptions }) {
+  const { timing, sessionCount, checkCount, observations } = insights;
+
+  if (sessionCount < 2 && checkCount < 3) return null;
 
   const [first, second] = timing.peaks;
-  const best = timing.feel.best;
+  const { best, worst } = timing.feel;
   const blockCounts = timing.heatmap.reduce<number[]>(
     (totals, row) => totals.map((total, block) => total + row[block]),
     new Array<number>(12).fill(0),
+  );
+  const blockChecks = Array.from({ length: 12 }, (_, block) =>
+    checkSummary(
+      observations
+        .filter((check) => Math.floor(check.localMinute / 120) === block)
+        .map((check) => check.feel),
+    ),
   );
 
   return (
@@ -219,23 +234,36 @@ export function TimingSection({ insights, options }: { insights: Insights; optio
               : `rate ${Math.max(1, 5 - timing.feel.rated)} more to find out`
           }
         />
+        {worst ? (
+          <Figure
+            label="Worst-rated hours"
+            value={formatMinuteOfDayRange(worst.fromMinute, worst.toMinute, options.locale)}
+            note={`rated bad ${percent(worst.badShare)} of ${worst.count} times`}
+          />
+        ) : null}
       </dl>
 
       <figure className="chart-block">
-        <figcaption className="chart-block__title">Start times, each tick one session</figcaption>
+        <figcaption className="chart-block__title">
+          {checkCount > 0
+            ? "Start times, each tick one session; checks below in green (good), amber (okay) and red (bad)"
+            : "Start times, each tick one session"}
+        </figcaption>
         <TimeOfDayChart
           curve={timing.curve}
           starts={insights.sessions.map((session) => session.localMinute)}
+          checks={observations.map((check) => ({ minute: check.localMinute, feel: check.feel }))}
           peaks={timing.peaks}
           locale={options.locale}
           ariaLabel="How start times spread across the day"
         />
         <TableView
-          caption="Sessions per two-hour block"
-          columns={["Hours", "Sessions"]}
+          caption={checkCount > 0 ? "Sessions and checks per two-hour block" : "Sessions per two-hour block"}
+          columns={checkCount > 0 ? ["Hours", "Sessions", "Checks"] : ["Hours", "Sessions"]}
           rows={blockCounts.map((count, block) => [
             formatMinuteOfDayRange(block * 120, (block + 1) * 120, options.locale),
             count,
+            ...(checkCount > 0 ? [blockChecks[block] || "none"] : []),
           ])}
         />
       </figure>

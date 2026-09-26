@@ -93,6 +93,37 @@ export const sessions = pgTable(
   ],
 );
 
+/** Checks: a rated moment without doing the routine. They never count as sessions. */
+export const observations = pgTable(
+  "observations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => profiles.clerkUserId, { onDelete: "cascade" }),
+    routineId: uuid("routine_id")
+      .notNull()
+      .references(() => routines.id, { onDelete: "cascade" }),
+    observedAt: timestamp("observed_at", { withTimezone: true, mode: "date" }).notNull(),
+    timezone: text("timezone").notNull(),
+    utcOffsetMinutes: smallint("utc_offset_minutes").notNull(),
+    localDate: date("local_date", { mode: "string" }).notNull(),
+    localMinute: smallint("local_minute").notNull(),
+    localWeekday: smallint("local_weekday").notNull(),
+    feel: feelEnum("feel").notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index("observations_routine_observed_idx").on(table.routineId, table.observedAt.desc()),
+    index("observations_user_observed_idx").on(table.userId, table.observedAt.desc()),
+    check("observations_utc_offset_range", sql`${table.utcOffsetMinutes} between -840 and 840`),
+    check("observations_local_minute_range", sql`${table.localMinute} between 0 and 1439`),
+    check("observations_local_weekday_range", sql`${table.localWeekday} between 1 and 7`),
+    check("observations_timezone_not_empty", sql`char_length(${table.timezone}) > 0`),
+  ],
+);
+
 export type Profile = typeof profiles.$inferSelect;
 export type RoutineRow = typeof routines.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
+export type ObservationRow = typeof observations.$inferSelect;

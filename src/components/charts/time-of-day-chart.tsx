@@ -7,6 +7,7 @@ import { formatMinuteOfDay } from "@/lib/format";
 import type { Peak } from "@/lib/insights";
 import { GRID_MINUTES } from "@/lib/insights/timing";
 import { MINUTES_PER_DAY } from "@/lib/time";
+import type { Feel } from "@/lib/types";
 
 import { ChartTooltip } from "./chart-tooltip";
 
@@ -15,22 +16,34 @@ const RUG = 14;
 const AXIS_HEIGHT = 24;
 const TOP = 26;
 
-/** Start times across a 24-hour day: a smoothed density with every session as a tick below. */
+function tooltipValue(started: number, checks: { feel: Feel }[]) {
+  if (checks.length === 0) return `${started} started`;
+  const bad = checks.filter((check) => check.feel === "bad").length;
+  return `${started} started, ${checks.length} checked${bad > 0 ? ` (${bad} bad)` : ""}`;
+}
+
+/**
+ * Start times across a 24-hour day: a smoothed density with every session as
+ * a tick below, and every check as a coloured tick under that.
+ */
 export function TimeOfDayChart({
   curve,
   starts,
+  checks = [],
   peaks,
   locale,
   ariaLabel,
 }: {
   curve: number[];
   starts: number[];
+  checks?: { minute: number; feel: Feel }[];
   peaks: Peak[];
   locale?: string;
   ariaLabel: string;
 }) {
   const [ref, width] = useElementWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
+  const checkRug = checks.length > 0 ? RUG : 0;
   const x = (minute: number) => (minute / MINUTES_PER_DAY) * width;
   const y = (value: number) => PLOT_HEIGHT - value * (PLOT_HEIGHT - TOP);
   const closed = [...curve, curve[0]];
@@ -47,7 +60,7 @@ export function TimeOfDayChart({
     <div className="chart" ref={ref}>
       <svg
         width={width}
-        height={PLOT_HEIGHT + RUG + AXIS_HEIGHT}
+        height={PLOT_HEIGHT + RUG + checkRug + AXIS_HEIGHT}
         role="img"
         aria-label={ariaLabel}
         onPointerMove={(event) => {
@@ -69,6 +82,21 @@ export function TimeOfDayChart({
             <line key={index} x1={x(minute)} x2={x(minute)} y1={PLOT_HEIGHT + 3} y2={PLOT_HEIGHT + RUG - 2} />
           ))}
         </g>
+
+        {checks.length > 0 ? (
+          <g className="chart__checks">
+            {checks.map((check, index) => (
+              <line
+                key={index}
+                className={`chart__check chart__check--${check.feel}`}
+                x1={x(check.minute)}
+                x2={x(check.minute)}
+                y1={PLOT_HEIGHT + RUG + 1}
+                y2={PLOT_HEIGHT + RUG + checkRug - 3}
+              />
+            ))}
+          </g>
+        ) : null}
 
         {peaks.map((peak) => (
           <g key={peak.minute} className="chart__peak">
@@ -92,7 +120,7 @@ export function TimeOfDayChart({
             <text
               key={hour}
               x={hour === 0 ? 0 : x(hour * 60)}
-              y={PLOT_HEIGHT + RUG + 16}
+              y={PLOT_HEIGHT + RUG + checkRug + 16}
               textAnchor={hour === 0 ? "start" : "middle"}
             >
               {formatMinuteOfDay(hour * 60, locale).replace(/:00(?!\d)/, "")}
@@ -105,7 +133,10 @@ export function TimeOfDayChart({
         <ChartTooltip
           x={x(hoverMinute)}
           width={width}
-          value={`${starts.filter((minute) => within(minute, hoverMinute)).length} started`}
+          value={tooltipValue(
+            starts.filter((minute) => within(minute, hoverMinute)).length,
+            checks.filter((check) => within(check.minute, hoverMinute)),
+          )}
           label={`within 30 min of ${formatMinuteOfDay(hoverMinute, locale)}`}
         />
       ) : null}

@@ -4,9 +4,10 @@ import { clsx } from "clsx";
 import { Minus, Plus } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 
-import { formatClock, formatMinutes, type FormatOptions } from "@/lib/format";
+import { ConfirmDelete, FEEL_OPTIONS, FeelField, MomentField, useMoment } from "@/components/panel-controls";
+import { FEEL_LABELS, formatClock, formatMinutes, type FormatOptions } from "@/lib/format";
 import { quantile } from "@/lib/insights/math";
-import { MS_PER_MINUTE, zonedParts } from "@/lib/time";
+import { MS_PER_MINUTE } from "@/lib/time";
 import type { Feel, SessionSource } from "@/lib/types";
 
 export interface LogValues {
@@ -19,28 +20,6 @@ export interface LogValues {
 }
 
 const MAX_MINUTES = 1440;
-
-const FINISH_OPTIONS = [
-  { id: "now", label: "Just now", minutesAgo: 0 },
-  { id: "15", label: "15 min ago", minutesAgo: 15 },
-  { id: "60", label: "1 h ago", minutesAgo: 60 },
-  { id: "custom", label: "Earlier", minutesAgo: null },
-] as const;
-
-type FinishChoice = (typeof FINISH_OPTIONS)[number]["id"];
-
-const FEEL_OPTIONS: { id: Feel; label: string }[] = [
-  { id: "good", label: "Good" },
-  { id: "okay", label: "Okay" },
-  { id: "bad", label: "Bad" },
-];
-
-function toLocalInput(ms: number, timeZone: string) {
-  const { localDate, localMinute } = zonedParts(ms, timeZone);
-  const hours = String(Math.floor(localMinute / 60)).padStart(2, "0");
-  const minutes = String(localMinute % 60).padStart(2, "0");
-  return `${localDate}T${hours}:${minutes}`;
-}
 
 /** Suggestions from the user's own spread of times, the usual one marked. */
 export function quickPicks(history: readonly number[], fallback: number) {
@@ -68,6 +47,7 @@ export function LogPanel({
   onSubmit,
   onCancel,
   onDelete,
+  onConvert,
 }: {
   noun: string;
   history: readonly number[];
@@ -79,19 +59,18 @@ export function LogPanel({
   onSubmit: (values: LogValues) => Promise<void>;
   onCancel: () => void;
   onDelete?: () => Promise<void>;
+  /** Saves the session as a check instead, for one that never happened. */
+  onConvert?: (values: { observedAt: number; feel: Feel }) => Promise<void>;
 }) {
   const id = useId();
   const { usual, picks } = quickPicks(history, fallbackMinutes);
   const [minutes, setMinutes] = useState(() => Math.max(1, Math.round(initial?.minutes ?? usual)));
   const [draft, setDraft] = useState(String(minutes));
-  const [finish, setFinish] = useState<FinishChoice>(mode === "edit" ? "custom" : "now");
-  const [customFinish, setCustomFinish] = useState(() =>
-    toLocalInput(initial?.finishedAt ?? now, options.timeZone),
-  );
+  const finish = useMoment(initial?.finishedAt ?? now, mode === "edit", options.timeZone);
   const [feel, setFeel] = useState<Feel | null>(initial?.feel ?? null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [converting, setConverting] = useState(false);
 
   function setBoth(value: number) {
     const next = Math.min(MAX_MINUTES, Math.max(1, Math.round(value)));
@@ -99,44 +78,61 @@ export function LogPanel({
     setDraft(String(next));
   }
 
-  function finishedAt(reference: number) {
-    const option = FINISH_OPTIONS.find((item) => item.id === finish)!;
-    if (option.minutesAgo !== null) return reference - option.minutesAgo * MS_PER_MINUTE;
-    return new Date(customFinish).getTime();
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    const finishedMs = finishedAt(Date.now());
+  /** The picked finish time, or null after showing why it can't be used. */
+  function checkedFinish(reference: number) {
+    const finishedMs = finish.resolve(reference);
 
     if (!Number.isFinite(finishedMs)) {
       setError("Pick when it finished.");
-      return;
+      return null;
     }
-    if (finishedMs > Date.now() + MS_PER_MINUTE) {
+    if (finishedMs > reference + MS_PER_MINUTE) {
       setError("That finish time is in the future. Pick a time that has passed.");
-      return;
+      return null;
     }
 
+    return Math.min(finishedMs, reference);
+  }
+
+  async function run(action: () => Promise<void>, fallback: string) {
     setSaving(true);
     setError(null);
 
     try {
-      await onSubmit({
-        minutes,
-        finishedAt: Math.min(finishedMs, Date.now()),
-        feel,
-        source: initial?.source ?? "manual",
-        timerSeconds: initial?.timerSeconds,
-      });
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "That didn’t save. Try again.");
+      await action();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : fallback);
       setSaving(false);
     }
   }
 
-  const previewFinish = finishedAt(now);
-  const startsAt = (Number.isFinite(previewFinish) ? previewFinish : now) - minutes * MS_PER_MINUTE;
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const finishedAt = checkedFinish(Date.now());
+    if (finishedAt === null) return;
+
+    void run(
+      () =>
+        onSubmit({
+          minutes,
+          finishedAt,
+          feel,
+          source: initial?.source ?? "manual",
+          timerSeconds: initial?.timerSeconds,
+        }),
+      "That didn’t save. Try again.",
+    );
+  }
+
+  function convert(checkFeel: Feel, reference: number) {
+    const observedAt = checkedFinish(reference);
+    if (observedAt === null || !onConvert) return;
+    void run(() => onConvert({ observedAt, feel: checkFeel }), "That didn’t change. Try again.");
+  }
+
+  const previewFinish = finish.resolve(now);
+  const finishesAt = Number.isFinite(previewFinish) ? previewFinish : now;
+  const startsAt = finishesAt - minutes * MS_PER_MINUTE;
 
   return (
     <form className="panel log" onSubmit={submit} aria-labelledby={`${id}-title`}>
@@ -185,53 +181,48 @@ export function LogPanel({
         </div>
       </fieldset>
 
-      <fieldset className="field">
-        <legend className="field__label">When did it finish?</legend>
-        <div className="chips">
-          {FINISH_OPTIONS.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              className={clsx("chip", finish === option.id && "chip--on")}
-              aria-pressed={finish === option.id}
-              onClick={() => setFinish(option.id)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-        {finish === "custom" ? (
-          <input
-            className="input log__when"
-            type="datetime-local"
-            aria-label="Finished at"
-            value={customFinish}
-            max={toLocalInput(now, options.timeZone)}
-            onChange={(event) => setCustomFinish(event.target.value)}
-          />
-        ) : null}
-        <p className="field__hint">
-          Started around {formatClock(startsAt, options)}.
-        </p>
-      </fieldset>
+      <MomentField
+        legend="When did it finish?"
+        inputLabel="Finished at"
+        moment={finish}
+        now={now}
+        timeZone={options.timeZone}
+      >
+        <p className="field__hint">Started around {formatClock(startsAt, options)}.</p>
+      </MomentField>
 
-      <fieldset className="field">
-        <legend className="field__label">How was the timing?</legend>
-        <div className="segmented" role="group">
-          {FEEL_OPTIONS.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              className={clsx("segmented__option", feel === option.id && "segmented__option--on")}
-              aria-pressed={feel === option.id}
-              onClick={() => setFeel((current) => (current === option.id ? null : option.id))}
-            >
-              {option.label}
+      <FeelField
+        legend="How was the timing?"
+        value={feel}
+        onChange={setFeel}
+        optional
+        hint="Optional. Ratings teach Nowish which hours suit you best."
+      />
+
+      {onConvert ? (
+        converting ? (
+          <div className="convert" role="group" aria-label="Save as a check instead">
+            <span>How did it look at {formatClock(finishesAt, options)}?</span>
+            <div className="chips">
+              {FEEL_OPTIONS.map((option) => (
+                <button key={option.id} type="button" className="chip" disabled={saving} onClick={() => convert(option.id, Date.now())}>
+                  {FEEL_LABELS[option.id]}
+                </button>
+              ))}
+            </div>
+            <button type="button" className="link-button" onClick={() => setConverting(false)}>
+              Keep as a {noun}
             </button>
-          ))}
-        </div>
-        <p className="field__hint">Optional. Ratings teach Nowish which hours suit you best.</p>
-      </fieldset>
+          </div>
+        ) : (
+          <p className="convert">
+            <span>Only checked, didn’t actually do it?</span>
+            <button type="button" className="link-button" onClick={() => setConverting(true)}>
+              Save it as a check instead
+            </button>
+          </p>
+        )
+      ) : null}
 
       {error ? (
         <p className="form-error" role="alert">
@@ -248,33 +239,7 @@ export function LogPanel({
         </button>
 
         {onDelete ? (
-          confirmingDelete ? (
-            <span className="confirm">
-              <span>Delete this {noun}?</span>
-              <button
-                type="button"
-                className="link-button link-button--danger"
-                onClick={async () => {
-                  setSaving(true);
-                  try {
-                    await onDelete();
-                  } catch (deleteError) {
-                    setError(deleteError instanceof Error ? deleteError.message : "That didn’t delete. Try again.");
-                    setSaving(false);
-                  }
-                }}
-              >
-                Delete
-              </button>
-              <button type="button" className="link-button" onClick={() => setConfirmingDelete(false)}>
-                Keep
-              </button>
-            </span>
-          ) : (
-            <button type="button" className="link-button panel__aside" onClick={() => setConfirmingDelete(true)}>
-              Delete
-            </button>
-          )
+          <ConfirmDelete noun={noun} onDelete={() => void run(onDelete, "That didn’t delete. Try again.")} />
         ) : null}
       </div>
     </form>

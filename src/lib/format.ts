@@ -1,5 +1,6 @@
 import type { Reason, Verdict, VerdictKind } from "@/lib/insights";
 import { daysBetween, zonedParts } from "@/lib/time";
+import type { Feel } from "@/lib/types";
 
 export interface FormatOptions {
   timeZone: string;
@@ -128,6 +129,17 @@ export const HEADLINES: Record<VerdictKind, string> = {
   later: "Not now.",
 };
 
+export const FEEL_LABELS: Record<Feel, string> = {
+  good: "Good time",
+  okay: "Okay",
+  bad: "Bad time",
+};
+
+/** "a good time", "okay", "a bad time": what a rating found, mid-sentence. */
+function feelPhrase(feel: Feel) {
+  return feel === "okay" ? "okay" : `a ${feel} time`;
+}
+
 export const KIND_LABELS: Record<VerdictKind, string> = {
   now: "Good time",
   nowish: "Soon",
@@ -142,9 +154,13 @@ export function verdictSummary(verdict: Verdict, now: number, options: FormatOpt
 
   if (verdict.kind === "now") {
     if (codes.includes("overdue")) return "It has been longer than usual, so don’t wait for a better moment.";
+    const checked = verdict.reasons.find((reason) => reason.code === "just-checked");
+    const looked = checked ? `It looked ${checked.feel} when you checked.` : null;
     if (verdict.window && verdict.window.to - verdict.at >= 15 * 60_000) {
-      return `Good until about ${formatClock(verdict.window.to, options)}.`;
+      const until = `Good until about ${formatClock(verdict.window.to, options)}.`;
+      return looked ? `${looked} ${until}` : until;
     }
+    if (looked) return looked;
     if (codes.includes("off-hours")) return "Not your usual time, but you’re due and nothing better is coming up soon.";
     return "This is one of your usual times.";
   }
@@ -189,6 +205,14 @@ export function reasonText(reason: Reason, options: FormatOptions): string | nul
       return `${formatWeekday(reason.weekday, "long", options.locale)}s are one of your usual days.`;
     case "unusual-day":
       return `You rarely do this on ${formatWeekday(reason.weekday, "long", options.locale)}s.`;
+    case "just-checked":
+      return `You checked at ${formatClock(reason.at, options)} and it was ${feelPhrase(reason.feel)}.`;
+    case "checks-near": {
+      const found = reason.feel === "okay" ? "found it okay" : `found ${feelPhrase(reason.feel)}`;
+      return reason.count === reason.total
+        ? `All ${reason.total} of your recent checks around this time ${found}.`
+        : `${reason.count} of your ${reason.total} recent checks around this time ${found}.`;
+    }
     case "takes":
       return reason.doneBy === null
         ? `It takes you about ${formatMinutes(reason.minutes)}.`

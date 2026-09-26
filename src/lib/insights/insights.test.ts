@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { sampleSessions } from "@/lib/sample-sessions";
 import { circularMinuteDistance, MS_PER_DAY, MS_PER_MINUTE, zonedParts } from "@/lib/time";
-import type { Feel, Session } from "@/lib/types";
+import type { Feel, Observation, Session } from "@/lib/types";
 
 import { expectedMinutesAt, readinessAt } from "./forecast";
 import { buildInsights, verdictFor } from "./index";
@@ -37,6 +37,28 @@ function session(startIso: string, minutes: number, feel: Feel | null = null): S
   };
 }
 
+function check(startIso: string, feel: Feel): Observation {
+  const parts = zonedParts(at(startIso), "UTC");
+
+  return {
+    id: `check-${startIso}`,
+    routineId: "routine",
+    observedAt: new Date(at(startIso)).toISOString(),
+    timezone: "UTC",
+    utcOffsetMinutes: 0,
+    localDate: parts.localDate,
+    localMinute: parts.localMinute,
+    localWeekday: parts.localWeekday,
+    feel,
+    createdAt: startIso,
+    updatedAt: startIso,
+  };
+}
+
+function daysBefore(iso: string, days: number) {
+  return new Date(at(iso) - days * MS_PER_DAY).toISOString();
+}
+
 /** One shower a day around 07:30 UTC, ~12 minutes, for 60 days before `until`. */
 function morningShowers(until: string) {
   return sampleSessions({
@@ -49,8 +71,8 @@ function morningShowers(until: string) {
   });
 }
 
-function insightsAt(sessions: Session[], nowIso: string, prior = DAILY) {
-  return buildInsights({ sessions, prior, now: at(nowIso), timeZone: "UTC" });
+function insightsAt(sessions: Session[], nowIso: string, prior = DAILY, observations: Observation[] = []) {
+  return buildInsights({ sessions, observations, prior, now: at(nowIso), timeZone: "UTC" });
 }
 
 function minuteOf(ms: number) {
@@ -261,5 +283,136 @@ describe("rhythm and timing", () => {
     expect(forecast.points).toHaveLength(forecast.horizonSteps * 2);
     expect(forecast.points[1].at).toBe(at("2026-09-24T07:35:00Z"));
     expect(forecast.points[2].at - forecast.points[1].at).toBe(forecast.stepMinutes * MS_PER_MINUTE);
+  });
+});
+
+describe("checks", () => {
+  const showers = () => morningShowers("2026-09-24T05:00:00Z");
+
+  it("never count as having done it", () => {
+    const checks = [
+      check("2026-09-23T21:00:00Z", "good"),
+      check("2026-09-24T06:00:00Z", "bad"),
+      check("2026-09-24T07:10:00Z", "okay"),
+    ];
+    const without = insightsAt(showers(), "2026-09-24T07:30:00Z");
+    const withChecks = insightsAt(showers(), "2026-09-24T07:30:00Z", DAILY, checks);
+
+    expect(withChecks.sessionCount).toBe(without.sessionCount);
+    expect(withChecks.checkCount).toBe(3);
+    expect(withChecks.rhythm).toEqual(without.rhythm);
+    expect(withChecks.timeSpent).toEqual(without.timeSpent);
+    expect(withChecks.forecast.points.map((point) => point.readiness)).toEqual(
+      without.forecast.points.map((point) => point.readiness),
+    );
+  });
+
+  it("says not now right after a bad check, and points past it", () => {
+    const insights = insightsAt(showers(), "2026-09-24T07:30:00Z", DAILY, [check("2026-09-24T07:28:00Z", "bad")]);
+    const verdict = verdictFor(insights);
+
+    expect(verdict.kind).not.toBe("now");
+    expect(verdict.reasons[0]).toMatchObject({ code: "just-checked", feel: "bad" });
+    expect(verdict.reasons.at(-1)).toMatchObject({ code: "takes", doneBy: null });
+    expect(verdict.bestAt - verdict.at).toBeGreaterThanOrEqual(15 * MS_PER_MINUTE);
+  });
+
+  it("only delays an overdue verdict until a bad check fades", () => {
+    const sessions = morningShowers("2026-09-22T12:00:00Z");
+    const insights = insightsAt(sessions, "2026-09-23T23:00:00Z", DAILY, [check("2026-09-23T22:58:00Z", "bad")]);
+    const verdict = verdictFor(insights);
+
+    expect(verdict.kind).toBe("nowish");
+    expect(verdict.reasons.map((reason) => reason.code)).toContain("overdue");
+    expect(verdict.bestAt - verdict.at).toBeLessThanOrEqual(90 * MS_PER_MINUTE);
+  });
+
+  it("says now when you just saw a good time and are nearly due", () => {
+    const before = verdictFor(insightsAt(showers(), "2026-09-24T06:50:00Z"));
+    const verdict = verdictFor(
+      insightsAt(showers(), "2026-09-24T06:50:00Z", DAILY, [check("2026-09-24T06:49:00Z", "good")]),
+    );
+
+    expect(before.kind).toBe("nowish");
+    expect(verdict.kind).toBe("now");
+    expect(verdict.reasons[0]).toMatchObject({ code: "just-checked", feel: "good" });
+  });
+
+  it("does not let a fresh check count once you have done it since", () => {
+    const sessions = [...showers(), session("2026-09-24T07:00:00Z", 12)];
+    const insights = insightsAt(sessions, "2026-09-24T07:20:00Z", DAILY, [check("2026-09-24T06:58:00Z", "good")]);
+
+    expect(insights.forecast.points[0].live).toBeNull();
+    expect(verdictFor(insights).kind).toBe("later");
+  });
+
+  it("moves the suggestion away from a time that keeps being busy", () => {
+    // Showers at 07:30 for weeks, then a week of finding 07:30 busy and going at 08:30.
+    const cutoff = at("2026-09-17T00:00:00Z");
+    const later = sampleSessions({
+      routineId: "shower",
+      now: at("2026-09-24T05:00:00Z"),
+      days: 7,
+      timeZone: "UTC",
+      seed: 9,
+      slots: [{ minute: 510, spread: 10, chance: 1, minutes: 12, minutesSpread: 2 }],
+    });
+    const sessions = [
+      ...showers().filter((item) => at(item.startedAt) < cutoff),
+      ...later.filter((item) => at(item.startedAt) >= cutoff),
+    ];
+    const busy = [1, 2, 3, 4, 5, 6, 7].map((day) => check(daysBefore("2026-09-24T07:30:00Z", day), "bad"));
+
+    const before = verdictFor(insightsAt(sessions, "2026-09-24T07:30:00Z"));
+    const verdict = verdictFor(insightsAt(sessions, "2026-09-24T07:30:00Z", DAILY, busy));
+
+    expect(before.kind).toBe("now");
+    expect(verdict.kind).toBe("nowish");
+    expect(verdict.bestAt - verdict.at).toBeGreaterThanOrEqual(20 * MS_PER_MINUTE);
+    expect(verdict.reasons).toContainEqual({ code: "checks-near", feel: "bad", count: 7, total: 7 });
+  });
+
+  it("does not let a few stray bad checks override a steady habit", () => {
+    const stray = [10, 20, 28].map((day) => check(daysBefore("2026-09-24T07:25:00Z", day), "bad"));
+    const verdict = verdictFor(insightsAt(showers(), "2026-09-24T07:30:00Z", DAILY, stray));
+
+    expect(verdict.kind).toBe("now");
+    expect(verdict.reasons.map((reason) => reason.code)).not.toContain("checks-near");
+  });
+
+  it("makes a time you have only checked look workable", () => {
+    const sessions = [1, 2, 3, 4].map((day) => session(daysBefore("2026-09-24T07:30:00Z", day), 10));
+    const evening = [1, 2, 3, 4].map((day) => check(daysBefore("2026-09-24T21:00:00Z", day), "good"));
+    const without = insightsAt(sessions, "2026-09-24T12:00:00Z");
+    const withChecks = insightsAt(sessions, "2026-09-24T12:00:00Z", DAILY, evening);
+    const habitAt = (insights: typeof without) =>
+      insights.forecast.points.find((point) => point.localMinute === 1260)!.habit;
+
+    expect(habitAt(withChecks)).toBeGreaterThan(habitAt(without) + 0.1);
+  });
+
+  it("waits out a bad check before the first session", () => {
+    const verdict = verdictFor(insightsAt([], "2026-09-24T07:30:00Z", DAILY, [check("2026-09-24T07:29:00Z", "bad")]));
+
+    expect(verdict.kind).toBe("nowish");
+    expect(verdict.reasons.map((reason) => reason.code)).not.toContain("first-time");
+    expect(verdict.bestAt).toBeGreaterThan(at("2026-09-24T07:40:00Z"));
+  });
+
+  it("counts check ratings toward the best and worst hours, but not toward usual times", () => {
+    const sessions = [1, 2, 3, 4, 5, 6].map((day) => session(daysBefore("2026-09-24T12:30:00Z", day), 10));
+    const checks: Observation[] = [];
+    for (let day = 1; day <= 4; day += 1) {
+      checks.push(check(daysBefore("2026-09-24T07:15:00Z", day), "bad"));
+      checks.push(check(daysBefore("2026-09-24T21:00:00Z", day), "good"));
+    }
+
+    const timing = insightsAt(sessions, "2026-09-24T12:00:00Z", DAILY, checks).timing;
+
+    expect(timing.feel).toMatchObject({ good: 4, bad: 4, rated: 8 });
+    expect(timing.feel.best).toMatchObject({ fromMinute: 1200, toMinute: 1320, goodShare: 1, count: 4 });
+    expect(timing.feel.worst).toMatchObject({ fromMinute: 360, toMinute: 480, badShare: 1, count: 4 });
+    expect(timing.peaks).toEqual(insightsAt(sessions, "2026-09-24T12:00:00Z").timing.peaks);
+    expect(timing.heatmap.flat().reduce((total, count) => total + count, 0)).toBe(sessions.length);
   });
 });

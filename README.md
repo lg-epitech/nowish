@@ -6,6 +6,8 @@ Should I shower now? You've asked yourself this. Possibly today.
 
 Nowish answers it. Log how long your showers actually take (the real number, not the one you'd tell a date) and it learns your rhythm well enough to say "Yes, now.", "Nowish." or "Not now." It works for laundry and the gym too, or anything else you do on a schedule and would rather not think about.
 
+Walked past and the bathroom was taken? Log a check instead. One tap says whether now looked good or bad, and Nowish learns which hours tend to be free without pretending you showered.
+
 Your sessions are private to your account. You can export them to CSV whenever you want to feel seen.
 
 Try it at [nowish-flame.vercel.app](https://nowish-flame.vercel.app).
