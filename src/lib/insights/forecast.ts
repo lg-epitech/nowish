@@ -1,7 +1,8 @@
-import { circularMinuteDistance, MS_PER_HOUR, MS_PER_MINUTE, zonedParts } from "@/lib/time";
+import { circularMinuteDistance, MS_PER_DAY, MS_PER_HOUR, MS_PER_MINUTE, zonedParts } from "@/lib/time";
+import type { Feel } from "@/lib/types";
 
 import { gaussian, normalCdf, weightedQuantile } from "./math";
-import { isWeekend, type PreparedSession, type RoutinePrior } from "./prepare";
+import { isWeekend, type PreparedObservation, type PreparedSession, type RoutinePrior } from "./prepare";
 import type { Gap } from "./rhythm";
 import { curveAt, nearestPeak, type Timing } from "./timing";
 
@@ -27,6 +28,23 @@ const NEAR_MIN_MINUTES = 180;
 /** Once due, every `share × gap` of waiting costs about 63% of a moment's value. */
 const WAIT_COST_GAP_SHARE = 0.35;
 
+/**
+ * A check you just made describes the next few minutes far better than any
+ * pattern: it pulls how good the moment looks toward what you saw, then fades.
+ */
+const LIVE_TARGET: Record<Feel, number> = { good: 1, okay: 0.65, bad: 0 };
+const LIVE_MAX_STRENGTH = 0.9;
+const LIVE_MIN_STRENGTH = 0.05;
+/** "Now" only ticks every minute, so a check tapped since still counts as current. */
+const LIVE_CLOCK_SLACK_MS = 2 * MS_PER_MINUTE;
+/** A fresh bad check holds off "now", even when overdue, until it fades below this. */
+const BLOCKED_STRENGTH = 0.3;
+/** A moment you just saw is good beats a slightly better one that is only a guess. */
+const CHECKED_NOW_RATIO = 0.7;
+/** Checks near a moment's time of day, over this many days, are quoted as a reason. */
+const CHECKS_NEAR_MINUTES = 30;
+const CHECKS_RECENT_DAYS = 21;
+
 export interface ForecastPoint {
   at: number;
   localMinute: number;
@@ -34,12 +52,21 @@ export interface ForecastPoint {
   elapsedHours: number | null;
   /** 0–1: how far you are through a typical gap for this time of day. */
   readiness: number;
-  /** 0–1: how much this moment looks like when you usually do it. */
+  /** 0–1: how good this time of day looks: when you usually do it, adjusted by checks. */
   habit: number;
+  /** The latest check, while it still colours this moment. */
+  live: LiveCheck | null;
   score: number;
   overdue: boolean;
   typicalGapHours: number;
   p90GapHours: number;
+}
+
+export interface LiveCheck {
+  at: number;
+  feel: Feel;
+  /** 0–1: how much the check still weighs at this moment. */
+  strength: number;
 }
 
 export interface Forecast {
@@ -62,6 +89,8 @@ export type Reason =
   | { code: "off-hours"; peakMinute: number }
   | { code: "usual-day"; weekday: number }
   | { code: "unusual-day"; weekday: number }
+  | { code: "just-checked"; feel: Feel; at: number }
+  | { code: "checks-near"; feel: Feel; count: number; total: number }
   | { code: "takes"; minutes: number; doneBy: number | null };
 
 export type VerdictKind = "now" | "nowish" | "later";
@@ -177,17 +206,49 @@ function cachedGapModel(cache: Map<number, GapModel>, model: ReadinessModel, loc
   return gapModel;
 }
 
+/** The latest check up to `now`, unless you have done it since. */
+export function latestCheck(
+  observations: readonly PreparedObservation[],
+  sessions: readonly PreparedSession[],
+  now: number,
+) {
+  let latest: PreparedObservation | null = null;
+  for (const observation of observations) {
+    if (observation.at <= now + LIVE_CLOCK_SLACK_MS) latest = observation;
+  }
+
+  const lastStart = sessions.at(-1)?.start ?? -Infinity;
+  return latest && latest.at > lastStart ? latest : null;
+}
+
+export function liveCheckAt(
+  check: PreparedObservation | null,
+  at: number,
+  halfLifeMinutes: number,
+): LiveCheck | null {
+  if (!check) return null;
+
+  const minutes = Math.max(0, (at - check.at) / MS_PER_MINUTE);
+  const strength = LIVE_MAX_STRENGTH * Math.pow(0.5, minutes / halfLifeMinutes);
+  return strength >= LIVE_MIN_STRENGTH ? { at: check.at, feel: check.feel, strength } : null;
+}
+
 export function buildForecast(input: {
   sessions: readonly PreparedSession[];
+  observations?: readonly PreparedObservation[];
   gaps: readonly Gap[];
   timing: Timing;
   prior: RoutinePrior;
   now: number;
   timeZone: string;
   typicalGapHours: number;
+  /** How fast a fresh check fades; about as long as whatever keeps you out. */
+  liveHalfLifeMinutes?: number;
 }): Forecast {
   const { stepMinutes, horizonSteps } = horizonFor(input.typicalGapHours);
   const last = input.sessions.at(-1) ?? null;
+  const check = latestCheck(input.observations ?? [], input.sessions, input.now);
+  const halfLife = input.liveHalfLifeMinutes ?? 20;
   const model: ReadinessModel = { gaps: input.gaps, prior: input.prior };
   const effectiveCount = input.sessions.reduce((total, session) => total + session.weight, 0);
   const gapModels = new Map<number, GapModel>();
@@ -205,9 +266,11 @@ export function buildForecast(input: {
       elapsedHours === null
         ? { readiness: 1, typicalGapHours: input.prior.cadenceHours, p90GapHours: input.prior.cadenceHours * 1.5, overdue: false }
         : readinessFrom(cachedGapModel(gapModels, model, local.localMinute), elapsedHours);
-    const habit = last
+    const usual = last
       ? habitAt(input.timing, local.localMinute, local.localWeekday, ready.typicalGapHours, effectiveCount)
       : 0.5;
+    const live = liveCheckAt(check, at, halfLife);
+    const habit = live ? usual + (LIVE_TARGET[live.feel] - usual) * live.strength : usual;
 
     points.push({
       at,
@@ -216,6 +279,7 @@ export function buildForecast(input: {
       elapsedHours,
       readiness: ready.readiness,
       habit,
+      live,
       score: ready.readiness * (0.25 + 0.75 * habit),
       overdue: ready.overdue,
       typicalGapHours: ready.typicalGapHours,
@@ -292,27 +356,71 @@ function bestIn(
   return { index: from, max };
 }
 
+function isBlocked(point: ForecastPoint) {
+  return point.live?.feel === "bad" && point.live.strength >= BLOCKED_STRENGTH;
+}
+
+function justChecked(point: ForecastPoint): Extract<Reason, { code: "just-checked" }> | null {
+  return point.live && point.live.strength >= BLOCKED_STRENGTH
+    ? { code: "just-checked", feel: point.live.feel, at: point.live.at }
+    : null;
+}
+
+/** What most recent checks near this time of day found, when they mostly agree. */
+function checksNear(
+  observations: readonly PreparedObservation[],
+  point: ForecastPoint,
+): Extract<Reason, { code: "checks-near" }> | null {
+  const counts: Record<Feel, number> = { good: 0, okay: 0, bad: 0 };
+  let total = 0;
+
+  for (const check of observations) {
+    if (check.at > point.at || check.at < point.at - CHECKS_RECENT_DAYS * MS_PER_DAY) continue;
+    if (circularMinuteDistance(check.localMinute, point.localMinute) > CHECKS_NEAR_MINUTES) continue;
+    counts[check.feel] += 1;
+    total += 1;
+  }
+
+  if (total < 2) return null;
+  const feel = (["bad", "good", "okay"] as const).find((candidate) => counts[candidate] * 2 >= total);
+  return feel ? { code: "checks-near", feel, count: counts[feel], total } : null;
+}
+
 export function verdictAt(input: {
   forecast: Forecast;
   index: number;
   sessions: readonly PreparedSession[];
+  observations?: readonly PreparedObservation[];
   timing: Timing;
   prior: RoutinePrior;
 }): Verdict {
   const { forecast, sessions, timing, prior } = input;
+  const observations = input.observations ?? [];
   const index = Math.max(0, Math.min(input.index, forecast.points.length - 1));
   const point = forecast.points[index];
   const expectedMinutes = expectedMinutesAt(sessions, prior, point.localMinute);
   const doneBy = point.at + expectedMinutes * MS_PER_MINUTE;
+  const checked = justChecked(point);
 
   if (sessions.length === 0 || point.elapsedHours === null) {
+    // Nothing to learn a rhythm from yet, but a fresh bad check still means "not this minute".
+    let clear = index;
+    while (clear < forecast.points.length - 1 && isBlocked(forecast.points[clear])) clear += 1;
+    const bestAt = forecast.points[clear].at;
+    const waitMinutes = (bestAt - point.at) / MS_PER_MINUTE;
+    const kind: VerdictKind = clear === index ? "now" : waitMinutes <= NOWISH_MINUTES ? "nowish" : "later";
+
     return {
-      kind: "now",
+      kind,
       at: point.at,
-      bestAt: point.at,
+      bestAt,
       window: null,
       expectedMinutes,
-      reasons: [{ code: "first-time" }, { code: "takes", minutes: expectedMinutes, doneBy }],
+      reasons: [
+        ...(clear === index ? [{ code: "first-time" } as const] : []),
+        ...(checked ? [checked] : []),
+        { code: "takes", minutes: expectedMinutes, doneBy: kind === "now" ? doneBy : null },
+      ],
       point,
     };
   }
@@ -329,25 +437,32 @@ export function verdictAt(input: {
   const lookahead = tooSoon
     ? forecast.horizonSteps
     : Math.min(forecast.horizonSteps, Math.max(minSteps, nearSteps));
-  const end = Math.min(forecast.points.length, index + lookahead);
+  // A fresh bad check rules out every moment until it fades.
+  const blocked = isBlocked(point);
+  let from = index;
+  while (blocked && from < forecast.points.length - 1 && isBlocked(forecast.points[from])) from += 1;
+  const end = Math.min(forecast.points.length, Math.max(index + lookahead, from + 1));
   const waitCostHours = gapHours * WAIT_COST_GAP_SHARE;
   const value = due
     ? (candidate: ForecastPoint) =>
         candidate.score * Math.exp(-(candidate.at - point.at) / MS_PER_HOUR / waitCostHours)
     : (candidate: ForecastPoint) => candidate.score;
-  const { index: best, max } = bestIn(forecast.points, index, end, value);
+  const search = bestIn(forecast.points, from, end, value);
+  // Overdue means "as soon as you can", which a fresh bad check only delays.
+  const best = point.overdue ? from : search.index;
   const bestPoint = forecast.points[best];
-  const ratio = max > 0 ? point.score / max : 1;
+  const ratio = search.max > 0 ? point.score / search.max : 1;
   const minutesToBest = (bestPoint.at - point.at) / MS_PER_MINUTE;
+  const nowRatio = point.live?.feel === "good" && !tooSoon && checked ? CHECKED_NOW_RATIO : NOW_RATIO;
 
   let kind: VerdictKind;
-  if (point.overdue) kind = "now";
+  if (point.overdue && !blocked) kind = "now";
   else if (tooSoon) kind = "later";
-  else if (ratio >= NOW_RATIO && (due || habitual)) kind = "now";
+  else if (!blocked && ratio >= nowRatio && (due || habitual)) kind = "now";
   else if (minutesToBest <= NOWISH_MINUTES) kind = "nowish";
   else kind = "later";
 
-  const reasons: Reason[] = [];
+  const reasons: Reason[] = checked ? [checked] : [];
   const elapsedHours = point.elapsedHours;
 
   if (point.overdue) {
@@ -371,17 +486,23 @@ export function verdictAt(input: {
     }
   }
 
+  // Quoted only when it backs the verdict, so the list reads as its reasons.
+  const nearby = checksNear(observations, point);
+  if (nearby && (nearby.feel === "bad" ? kind !== "now" : nearby.feel === "good" && kind === "now")) {
+    reasons.push(nearby);
+  }
+
   if (point.typicalGapHours >= 48 && sessions.length >= 6) {
     const factor = timing.weekdayFactor[point.localWeekday - 1];
     if (factor >= 0.75) reasons.push({ code: "usual-day", weekday: point.localWeekday });
     else if (factor <= 0.35) reasons.push({ code: "unusual-day", weekday: point.localWeekday });
   }
 
-  reasons.push({ code: "takes", minutes: expectedMinutes, doneBy: kind === "later" ? null : doneBy });
+  reasons.push({ code: "takes", minutes: expectedMinutes, doneBy: kind === "later" || blocked ? null : doneBy });
 
   const anchor = kind === "now" ? index : best;
   const threshold = Math.max(forecast.points[anchor].score, bestPoint.score) * WINDOW_RATIO;
-  const window = windowAround(forecast.points, anchor, index, end, threshold);
+  const window = windowAround(forecast.points, anchor, from, end, threshold);
 
   return {
     kind,

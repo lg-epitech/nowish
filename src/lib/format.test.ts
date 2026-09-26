@@ -73,6 +73,21 @@ describe("reasons", () => {
     );
   });
 
+  it("quotes what your checks found", () => {
+    expect(reasonText({ code: "just-checked", feel: "bad", at: Date.parse("2026-09-24T07:45:00Z") }, options)).toBe(
+      "You checked at 7:45 AM and it was a bad time.",
+    );
+    expect(reasonText({ code: "just-checked", feel: "okay", at: Date.parse("2026-09-24T07:45:00Z") }, options)).toBe(
+      "You checked at 7:45 AM and it was okay.",
+    );
+    expect(reasonText({ code: "checks-near", feel: "bad", count: 3, total: 4 }, options)).toBe(
+      "3 of your 4 recent checks around this time found a bad time.",
+    );
+    expect(reasonText({ code: "checks-near", feel: "good", count: 2, total: 2 }, options)).toBe(
+      "All 2 of your recent checks around this time found a good time.",
+    );
+  });
+
   it("only promises a finish time when now is a good time", () => {
     expect(reasonText({ code: "takes", minutes: 12, doneBy: null }, options)).toBe("It takes you about 12 min.");
     expect(reasonText({ code: "takes", minutes: 12, doneBy: Date.parse("2026-09-24T20:12:00Z") }, options)).toBe(

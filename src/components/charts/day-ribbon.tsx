@@ -191,7 +191,7 @@ export function DayRibbon({
 
       <TableView
         caption={`How good each moment looks for ${noun}`}
-        columns={["Time", "Verdict", "Ready", "Usual time"]}
+        columns={["Time", "Verdict", "Ready", "Time of day"]}
         rows={tableRows}
       />
     </figure>

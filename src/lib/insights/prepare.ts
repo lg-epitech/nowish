@@ -1,9 +1,12 @@
-import type { Feel, Session } from "@/lib/types";
+import type { Feel, Observation, Session } from "@/lib/types";
 
 import { decayWeight } from "./math";
 
 /** Recent sessions count more: a session from 45 days ago weighs half as much. */
 export const HALF_LIFE_DAYS = 45;
+
+/** How busy a time of day is changes faster than habits do (new flatmate, new timetable). */
+export const FRESHNESS_HALF_LIFE_DAYS = 14;
 
 export interface PreparedSession {
   id: string;
@@ -15,6 +18,22 @@ export interface PreparedSession {
   feel: Feel | null;
   /** Recency weight in (0, 1]. */
   weight: number;
+  /** Recency weight on the shorter freshness half-life, for how good a time is lately. */
+  freshness: number;
+}
+
+/** A check: a rated moment without a session. */
+export interface PreparedObservation {
+  id: string;
+  at: number;
+  localMinute: number;
+  localWeekday: number;
+  localDate: string;
+  feel: Feel;
+  /** Recency weight in (0, 1], on the same half-life as sessions. */
+  weight: number;
+  /** Recency weight on the shorter freshness half-life. */
+  freshness: number;
 }
 
 export interface RoutinePrior {
@@ -36,10 +55,34 @@ export function prepareSessions(sessions: readonly Session[], now: number): Prep
         localDate: session.localDate,
         feel: session.feel,
         weight: decayWeight(now - start, HALF_LIFE_DAYS),
+        freshness: decayWeight(now - start, FRESHNESS_HALF_LIFE_DAYS),
       };
     })
     .filter((session) => Number.isFinite(session.start))
     .sort((left, right) => left.start - right.start || left.id.localeCompare(right.id));
+}
+
+export function prepareObservations(
+  observations: readonly Observation[],
+  now: number,
+): PreparedObservation[] {
+  return observations
+    .map((observation) => {
+      const at = Date.parse(observation.observedAt);
+
+      return {
+        id: observation.id,
+        at,
+        localMinute: observation.localMinute,
+        localWeekday: observation.localWeekday,
+        localDate: observation.localDate,
+        feel: observation.feel,
+        weight: decayWeight(now - at, HALF_LIFE_DAYS),
+        freshness: decayWeight(now - at, FRESHNESS_HALF_LIFE_DAYS),
+      };
+    })
+    .filter((observation) => Number.isFinite(observation.at))
+    .sort((left, right) => left.at - right.at || left.id.localeCompare(right.id));
 }
 
 export function isWeekend(weekday: number) {

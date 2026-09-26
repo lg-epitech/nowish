@@ -357,6 +357,29 @@ a {
   color: color-mix(in oklab, var(--surface) 70%, transparent);
 }
 
+.chip:disabled {
+  opacity: 0.5;
+}
+
+.chip__dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.chip--good .chip__dot {
+  background: var(--signal-now);
+}
+
+.chip--okay .chip__dot {
+  background: var(--signal-nowish);
+}
+
+.chip--bad .chip__dot {
+  background: var(--danger);
+}
+
 .segmented {
   display: inline-grid;
   align-self: flex-start;
@@ -819,6 +842,41 @@ a {
   animation: open 200ms ease both;
 }
 
+.checkin {
+  display: flex;
+  flex-basis: 100%;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.checkin__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.checkin__label {
+  margin-right: 4px;
+  color: var(--ink-2);
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.convert {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  color: var(--ink-2);
+  font-size: 0.9375rem;
+}
+
+.check-panel__lede {
+  margin-top: 6px;
+}
+
 .timer {
   display: flex;
   margin-top: 30px;
@@ -994,6 +1052,23 @@ a {
   stroke: var(--water);
   stroke-opacity: 0.45;
   stroke-width: 1;
+}
+
+.chart__check {
+  stroke-opacity: 0.8;
+  stroke-width: 1.5;
+}
+
+.chart__check--good {
+  stroke: var(--signal-now);
+}
+
+.chart__check--okay {
+  stroke: var(--signal-nowish);
+}
+
+.chart__check--bad {
+  stroke: var(--danger);
 }
 
 .chart__peak circle {
@@ -1330,6 +1405,14 @@ a {
   font-size: 0.9375rem;
 }
 
+.history__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
 .history__source {
   display: inline-flex;
   align-items: center;
@@ -1437,6 +1520,10 @@ a {
   .actions__last,
   .feedback {
     margin-left: 0;
+  }
+
+  .checkin__label {
+    flex-basis: 100%;
   }
 
   .why {

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createObservationSchema,
   createRoutineSchema,
   createSessionSchema,
+  updateObservationSchema,
   updateRoutineSchema,
   updateSessionSchema,
 } from "./validation";
@@ -43,6 +45,29 @@ describe("session validation", () => {
     expect(updateSessionSchema.safeParse({ durationSeconds: 600 }).success).toBe(true);
     expect(updateSessionSchema.safeParse({ startedAt: validSession.startedAt }).success).toBe(false);
     expect(updateSessionSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("check validation", () => {
+  const validCheck = { observedAt: "2026-09-20T07:30:00.000Z", timezone: "Europe/Paris", feel: "bad" };
+
+  it("needs a rating, because an unrated check says nothing", () => {
+    expect(createObservationSchema.parse(validCheck)).toEqual(validCheck);
+    expect(createObservationSchema.safeParse({ ...validCheck, feel: undefined }).success).toBe(false);
+    expect(createObservationSchema.safeParse({ ...validCheck, feel: null }).success).toBe(false);
+  });
+
+  it("rejects checks in the future and durations it does not have", () => {
+    const observedAt = new Date(Date.now() + 60 * 60_000).toISOString();
+
+    expect(createObservationSchema.safeParse({ ...validCheck, observedAt }).success).toBe(false);
+    expect(createObservationSchema.safeParse({ ...validCheck, durationSeconds: 600 }).success).toBe(false);
+  });
+
+  it("moves the time and timezone together on edit", () => {
+    expect(updateObservationSchema.safeParse({ feel: "good" }).success).toBe(true);
+    expect(updateObservationSchema.safeParse({ observedAt: validCheck.observedAt }).success).toBe(false);
+    expect(updateObservationSchema.safeParse({}).success).toBe(false);
   });
 });
 

@@ -40,6 +40,9 @@ export const MAX_ROUTINES = 24;
 /** The most recent sessions the insights engine reads for one routine. */
 export const MAX_SESSIONS_READ = 1500;
 
+/** The most recent checks the insights engine reads for one routine. */
+export const MAX_OBSERVATIONS_READ = 1500;
+
 export interface Routine {
   id: string;
   name: string;
@@ -71,11 +74,37 @@ export interface Session {
   updatedAt: string;
 }
 
+/**
+ * A check without doing the thing: "I looked, and now would have been a good
+ * (or bad) time." It teaches timing, never rhythm or time spent.
+ */
+export interface Observation {
+  id: string;
+  routineId: string;
+  observedAt: string;
+  timezone: string;
+  utcOffsetMinutes: number;
+  /** Wall-clock date where the check happened, `YYYY-MM-DD`. */
+  localDate: string;
+  /** Wall-clock minute of the day of the check, 0–1439. */
+  localMinute: number;
+  /** ISO weekday of the check, 1 (Monday) – 7 (Sunday). */
+  localWeekday: number;
+  feel: Feel;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RoutinesResponse {
   routines: Routine[];
 }
 
 export interface SessionsResponse {
   sessions: Session[];
+  truncated: boolean;
+}
+
+export interface ObservationsResponse {
+  observations: Observation[];
   truncated: boolean;
 }

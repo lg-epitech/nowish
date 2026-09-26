@@ -1,7 +1,16 @@
-import type { Routine, RoutinesResponse, Session, SessionsResponse } from "@/lib/types";
 import type {
+  Observation,
+  ObservationsResponse,
+  Routine,
+  RoutinesResponse,
+  Session,
+  SessionsResponse,
+} from "@/lib/types";
+import type {
+  CreateObservationInput,
   CreateRoutineInput,
   CreateSessionInput,
+  UpdateObservationInput,
   UpdateRoutineInput,
   UpdateSessionInput,
 } from "@/lib/validation";
@@ -52,6 +61,24 @@ export const api = {
   updateSession: (id: string, body: UpdateSessionInput) =>
     request<{ session: Session }>(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteSession: (id: string) => request<void>(`/api/sessions/${id}`, { method: "DELETE" }),
+  convertSession: (id: string, body: CreateObservationInput) =>
+    request<{ observation: Observation }>(`/api/sessions/${id}/convert`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listObservations: (routineId: string) =>
+    request<ObservationsResponse>(`/api/routines/${routineId}/observations`),
+  createObservation: (routineId: string, body: CreateObservationInput) =>
+    request<{ observation: Observation }>(`/api/routines/${routineId}/observations`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateObservation: (id: string, body: UpdateObservationInput) =>
+    request<{ observation: Observation }>(`/api/observations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteObservation: (id: string) => request<void>(`/api/observations/${id}`, { method: "DELETE" }),
 };
 
 export function errorMessage(error: unknown, fallback: string) {

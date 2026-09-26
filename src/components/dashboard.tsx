@@ -4,6 +4,7 @@ import { clsx } from "clsx";
 import { Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import type { CheckValues } from "@/components/check-panel";
 import type { LogValues } from "@/components/log-panel";
 import { RoutineForm, type RoutineValues } from "@/components/routine-form";
 import { RoutineIcon } from "@/components/routine-icon";
@@ -12,7 +13,7 @@ import { useNow } from "@/hooks/use-now";
 import { api, errorMessage } from "@/lib/api";
 import type { FormatOptions } from "@/lib/format";
 import { browserTimezone, MS_PER_MINUTE } from "@/lib/time";
-import type { Routine, Session } from "@/lib/types";
+import type { Observation, Routine, Session } from "@/lib/types";
 
 const SELECTED_KEY = "nowish:routine";
 
@@ -36,6 +37,7 @@ export function Dashboard() {
   const [routines, setRoutines] = useState<Routine[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Record<string, Session[]>>({});
+  const [observations, setObservations] = useState<Record<string, Observation[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [form, setForm] = useState<"new" | "edit" | null>(null);
@@ -67,16 +69,17 @@ export function Dashboard() {
 
   const selected = routines?.find((routine) => routine.id === selectedId) ?? null;
   const selectedSessions = selectedId ? sessions[selectedId] : undefined;
+  const selectedObservations = selectedId ? observations[selectedId] : undefined;
 
   useEffect(() => {
     if (!selectedId || selectedSessions) return;
     let active = true;
 
-    api
-      .listSessions(selectedId)
-      .then((page) => {
+    Promise.all([api.listSessions(selectedId), api.listObservations(selectedId)])
+      .then(([sessionPage, observationPage]) => {
         if (!active) return;
-        setSessions((current) => ({ ...current, [selectedId]: page.sessions }));
+        setObservations((current) => ({ ...current, [selectedId]: observationPage.observations }));
+        setSessions((current) => ({ ...current, [selectedId]: sessionPage.sessions }));
         setSessionsError(null);
       })
       .catch((loadError) => {
@@ -100,10 +103,15 @@ export function Dashboard() {
     setRoutines((list) => list?.map((routine) => (routine.id === routineId ? withSession(routine, next) : routine)) ?? list);
   }
 
+  function replaceObservations(routineId: string, update: (current: Observation[]) => Observation[]) {
+    setObservations((current) => ({ ...current, [routineId]: update(current[routineId] ?? []) }));
+  }
+
   async function createRoutine(values: RoutineValues) {
     const { routine } = await api.createRoutine({ ...values, timezone: browserTimezone() });
     setRoutines((current) => [...(current ?? []), routine]);
     setSessions((current) => ({ ...current, [routine.id]: [] }));
+    setObservations((current) => ({ ...current, [routine.id]: [] }));
     select(routine.id);
   }
 
@@ -217,6 +225,7 @@ export function Dashboard() {
             key={selected.id}
             routine={selected}
             sessions={selectedSessions}
+            observations={selectedObservations}
             now={now}
             options={options}
             handlers={{
@@ -253,6 +262,43 @@ export function Dashboard() {
               onDeleteSession: async (session) => {
                 await api.deleteSession(session.id);
                 replaceSessions(selected.id, (current) => current.filter((item) => item.id !== session.id));
+              },
+              onConvertSession: async (session, values: CheckValues) => {
+                const { observation } = await api.convertSession(session.id, {
+                  observedAt: new Date(values.observedAt).toISOString(),
+                  timezone: options.timeZone,
+                  feel: values.feel,
+                });
+                replaceSessions(selected.id, (current) => current.filter((item) => item.id !== session.id));
+                replaceObservations(selected.id, (current) => [...current, observation]);
+              },
+              onCreateCheck: async (feel) => {
+                const { observation } = await api.createObservation(selected.id, {
+                  observedAt: new Date().toISOString(),
+                  timezone: options.timeZone,
+                  feel,
+                });
+                replaceObservations(selected.id, (current) => [...current, observation]);
+                return observation;
+              },
+              onUpdateCheck: async (observation, values) => {
+                const moved =
+                  values.observedAt !== undefined &&
+                  Math.abs(values.observedAt - Date.parse(observation.observedAt)) >= MS_PER_MINUTE;
+                const { observation: updated } = await api.updateObservation(observation.id, {
+                  ...(values.feel ? { feel: values.feel } : {}),
+                  ...(moved
+                    ? { observedAt: new Date(values.observedAt!).toISOString(), timezone: options.timeZone }
+                    : {}),
+                });
+                replaceObservations(selected.id, (current) =>
+                  current.map((item) => (item.id === updated.id ? updated : item)),
+                );
+                return updated;
+              },
+              onDeleteCheck: async (observation) => {
+                await api.deleteObservation(observation.id);
+                replaceObservations(selected.id, (current) => current.filter((item) => item.id !== observation.id));
               },
             }}
           />
