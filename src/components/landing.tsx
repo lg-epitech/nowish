@@ -59,21 +59,21 @@ export function Landing() {
   return (
     <div className="landing">
       <section className="landing__intro">
-        <h1 className="landing__title">Should I shower now?</h1>
+        <h1 className="landing__title">Will the shower be free?</h1>
         <p className="landing__lede">
-          Log how long your showers actually take. Nowish learns when you usually go and how long you wait between
-          them, then answers the question for right now.
+          Report whether the area is clear or busy. Nowish brings your reports together into one congestion score:
+          an estimated percentage chance that it will be usable when you need it.
         </p>
         <div className="landing__cta">
           <SignInCta label="Start with your showers" />
-          <p>Then add laundry, the gym, or anything else you do on a rhythm.</p>
+          <p>For shared showers, laundry areas, the gym, and other spaces you use.</p>
         </div>
       </section>
 
       <section className="landing__demo" aria-label="Live example">
         <p className="landing__demo-note">
-          A live example, computed for this minute from four months of made-up showers: most mornings around 7:30, some
-          late evenings.
+          A live example using four months of sample sessions and congestion ratings. Drag the chart to explore
+          how the estimate changes through the next day.
         </p>
         {now !== null ? (
           <RoutineView

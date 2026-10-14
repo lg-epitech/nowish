@@ -170,7 +170,7 @@ function checkSummary(feels: readonly string[]) {
   return (["good", "okay", "bad"] as const)
     .map((feel) => [feel, feels.filter((item) => item === feel).length] as const)
     .filter(([, count]) => count > 0)
-    .map(([feel, count]) => `${count} ${feel}`)
+    .map(([feel, count]) => `${count} ${feel === "good" ? "clear" : feel === "bad" ? "busy" : "with some congestion"}`)
     .join(", ");
 }
 
@@ -230,7 +230,7 @@ export function TimingSection({ insights, options }: { insights: Insights; optio
           }
           note={
             best
-              ? `rated good ${percent(best.goodShare)} of ${best.count} times`
+              ? `reported clear ${percent(best.goodShare)} of ${best.count} times`
               : `rate ${Math.max(1, 5 - timing.feel.rated)} more to find out`
           }
         />
@@ -238,7 +238,7 @@ export function TimingSection({ insights, options }: { insights: Insights; optio
           <Figure
             label="Worst-rated hours"
             value={formatMinuteOfDayRange(worst.fromMinute, worst.toMinute, options.locale)}
-            note={`rated bad ${percent(worst.badShare)} of ${worst.count} times`}
+            note={`reported busy ${percent(worst.badShare)} of ${worst.count} times`}
           />
         ) : null}
       </dl>
@@ -246,7 +246,7 @@ export function TimingSection({ insights, options }: { insights: Insights; optio
       <figure className="chart-block">
         <figcaption className="chart-block__title">
           {checkCount > 0
-            ? "Start times, each tick one session; checks below in green (good), amber (okay) and red (bad)"
+            ? "Start times, each tick one session; checks below in green (clear), amber (some congestion) and red (busy)"
             : "Start times, each tick one session"}
         </figcaption>
         <TimeOfDayChart

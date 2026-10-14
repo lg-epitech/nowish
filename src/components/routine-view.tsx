@@ -11,6 +11,7 @@ import { LogPanel, type LogValues } from "@/components/log-panel";
 import { FEEL_OPTIONS } from "@/components/panel-controls";
 import { RoutineIcon } from "@/components/routine-icon";
 import { RhythmSection, TimeSpentSection, TimingSection } from "@/components/stats";
+import { refreshNow } from "@/hooks/use-now";
 import { useTimer } from "@/hooks/use-timer";
 import { errorMessage } from "@/lib/api";
 import {
@@ -18,10 +19,8 @@ import {
   formatClock,
   formatDelta,
   formatDuration,
-  formatGap,
   formatMinutes,
   formatMoment,
-  HEADLINES,
   reasonText,
   relativeDay,
   verdictSummary,
@@ -62,7 +61,7 @@ function question(name: string, at: number, now: number, selected: boolean, opti
   return day === "today" ? `${name} at ${clock}?` : `${name} ${day} at ${clock}?`;
 }
 
-/** One tap to say how right now looks, without logging the thing itself. */
+/** One tap to report congestion without logging a completed session. */
 function CheckIn({
   noun,
   current,
@@ -78,9 +77,9 @@ function CheckIn({
 }) {
   return (
     <div className="checkin">
-      <div className="checkin__row" role="group" aria-label={`Just checked? Rate right now without logging a ${noun}`}>
+      <div className="checkin__row" role="group" aria-label={`Report congestion for ${noun} right now`}>
         <span className="checkin__label" aria-hidden="true">
-          Just checked?
+          How busy is it now?
         </span>
         {FEEL_OPTIONS.map((option) => (
           <button
@@ -136,19 +135,12 @@ function counted(count: number, noun: string) {
   return `${count} ${count === 1 ? noun : `${noun}s`}`;
 }
 
-function confidenceText(sessionCount: number, checkCount: number, confidence: string, routine: Routine) {
-  const checks = checkCount > 0 ? counted(checkCount, "check") : null;
-
-  if (sessionCount === 0) {
-    const guess = `Until you log a few, Nowish uses your guess: ${formatMinutes(routine.typicalMinutes)}, about every ${formatGap(routine.cadenceHours)}.`;
-    return checks ? `${guess} Your ${checks} already shape the timing.` : guess;
-  }
-
-  const basis = checks ? `${counted(sessionCount, "session")} and ${checks}` : counted(sessionCount, "session");
-  return confidence === "solid"
-    ? `Based on ${basis}, with recent ones counting more.`
-    : `Based on ${basis}. It gets sharper after about 15 sessions.`;
-}
+const EVIDENCE_LABELS = {
+  none: "No comparable evidence",
+  low: "Limited evidence",
+  moderate: "Moderate evidence",
+  high: "Strong evidence",
+};
 
 export function RoutineView({
   routine,
@@ -197,6 +189,8 @@ export function RoutineView({
   const { forecast } = insights;
   const selected = selectedAt === null ? 0 : indexAt(forecast, selectedAt);
   const verdict = verdictAt(selected);
+  const congestion = verdict.point.congestion;
+  const evidenceLabel = insights.congestion.ratedCount === 0 ? "No reports yet" : EVIDENCE_LABELS[congestion.confidence];
   const reasons = verdict.reasons
     .map((reason) => reasonText(reason, options))
     .filter((text): text is string => text !== null);
@@ -208,6 +202,7 @@ export function RoutineView({
     if (!handlers) return;
     const usualBefore = insights.timeSpent.typicalMinutes;
     const session = await handlers.onCreateSession(values);
+    refreshNow();
     if (values.source === "timer") timer.clear();
     setPanel(null);
     setSelectedAt(null);
@@ -232,6 +227,7 @@ export function RoutineView({
       const observation = recentCheck
         ? await handlers.onUpdateCheck(recentCheck, { feel })
         : await handlers.onCreateCheck(feel);
+      refreshNow();
       setSelectedAt(null);
       setFeedback({ kind: "check", observation });
     } catch (checkFailure) {
@@ -247,6 +243,7 @@ export function RoutineView({
     try {
       if (feedback.kind === "session") await handlers.onDeleteSession(feedback.session);
       else await handlers.onDeleteCheck(feedback.observation);
+      refreshNow();
       setFeedback(null);
     } finally {
       setUndoing(false);
@@ -304,14 +301,17 @@ export function RoutineView({
         options={options}
         onSubmit={async (values) => {
           await handlers.onUpdateSession(panel.session, values);
+          refreshNow();
           setPanel(null);
         }}
         onDelete={async () => {
           await handlers.onDeleteSession(panel.session);
+          refreshNow();
           setPanel(null);
         }}
         onConvert={async (values) => {
           await handlers.onConvertSession(panel.session, values);
+          refreshNow();
           setPanel(null);
         }}
         onCancel={() => setPanel(null)}
@@ -325,6 +325,7 @@ export function RoutineView({
         options={options}
         onSubmit={async (values) => {
           const observation = await handlers.onUpdateCheck(panel.observation, values);
+          refreshNow();
           setFeedback((current) =>
             current?.kind === "check" && current.observation.id === observation.id ? { kind: "check", observation } : current,
           );
@@ -332,6 +333,7 @@ export function RoutineView({
         }}
         onDelete={async () => {
           await handlers.onDeleteCheck(panel.observation);
+          refreshNow();
           setFeedback((current) =>
             current?.kind === "check" && current.observation.id === panel.observation.id ? null : current,
           );
@@ -380,7 +382,8 @@ export function RoutineView({
           <p className="feedback" role="status">
             <span>
               Logged <strong>{formatMinutes(feedback.session.durationSeconds / 60)}</strong>
-              {feedback.deltaMinutes === null ? ". Nowish starts learning from here." : `, ${formatDelta(feedback.deltaMinutes)}.`}
+              {feedback.deltaMinutes === null ? "." : `, ${formatDelta(feedback.deltaMinutes)}.`}
+              {feedback.session.feel ? " Congestion report included." : " Add a congestion rating to teach the score."}
             </span>
             <button type="button" className="link-button" onClick={undo} disabled={undoing}>
               Undo
@@ -426,7 +429,7 @@ export function RoutineView({
 
   return (
     <div className={clsx("routine", compact && "routine--compact")}>
-      <section className="hero" data-kind={verdict.kind} aria-labelledby={`verdict-${routine.id}`}>
+      <section className="hero" data-kind={verdict.kind} data-confidence={congestion.confidence} aria-labelledby={`verdict-${routine.id}`}>
         <div className="hero__top">
           <p className="hero__question">
             <RoutineIcon icon={routine.icon} size={20} />
@@ -439,19 +442,24 @@ export function RoutineView({
           ) : null}
         </div>
 
-        <Heading id={`verdict-${routine.id}`} className="hero__verdict">
+        <p className="hero__score-label">Congestion score</p>
+        <Heading id={`verdict-${routine.id}`} className="hero__verdict" aria-live="polite">
           <span className="signal" aria-hidden="true" />
-          {HEADLINES[verdict.kind]}
+          <span><span className="sr-only">Congestion score: </span>{Math.round(congestion.probability * 100)}%</span>
         </Heading>
-        <p className="hero__summary" aria-live="polite">
-          {verdictSummary(verdict, now, options)}
+        <p className="hero__score-meaning">Estimated chance usable · higher is better</p>
+        <p className="hero__evidence" data-confidence={congestion.confidence}>{evidenceLabel}</p>
+        <p className="hero__summary">
+          {insights.congestion.ratedCount === 0
+            ? "50% is a neutral starting point. Report whether the area is clear or busy to start learning."
+            : verdictSummary(verdict, now, options)}
         </p>
 
         {actions}
         {panelNode}
       </section>
 
-      {insights.sessionCount > 0 ? (
+      {insights.congestion.ratedCount > 0 ? (
         <DayRibbon
           forecast={forecast}
           selected={selected}
@@ -469,7 +477,36 @@ export function RoutineView({
             <li key={reason}>{reason}</li>
           ))}
         </ul>
-        <p className="why__confidence">{confidenceText(insights.sessionCount, insights.checkCount, insights.confidence, routine)}</p>
+        <div className="why__evidence">
+          <p className="why__confidence">
+            {insights.congestion.ratedCount > 0
+              ? `Based on ${counted(insights.congestion.ratedCount, "congestion rating")} across ${counted(insights.congestion.dayCount, "day")}. Recent reports around this time and on similar days count more.`
+              : "Your congestion reports build this estimate, whether you log a session or only take a look."}
+            {insights.congestion.unratedCount > 0
+              ? ` ${counted(insights.congestion.unratedCount, "unrated session")} ${insights.congestion.unratedCount === 1 ? "contributes" : "contribute"} to duration and rhythm statistics, but ${insights.congestion.unratedCount === 1 ? "provides" : "provide"} no congestion evidence.`
+              : ""}
+          </p>
+          <details className="score-details">
+            <summary>How the score works</summary>
+            <p>
+              Every congestion rating contributes. Clear means usable, busy means unavailable, and some congestion
+              gives partial credit because usability is uncertain. Older good, okay, and bad timing ratings serve
+              as historical proxies.
+            </p>
+            <p>
+              Similar times and days carry more weight, while recent reports briefly update the estimate for now.
+              Reports made close together share less influence, and each day has a capped contribution. Limited or old evidence keeps the score
+              closer to 50%.
+            </p>
+            {insights.congestion.ratedCount > 0 ? (
+              <p>
+                Your reports: {insights.congestion.counts.good} clear, {insights.congestion.counts.okay} with some
+                congestion, {insights.congestion.counts.bad} busy.
+              </p>
+            ) : null}
+            <p>This is an estimate from your reports, not a guarantee that the area will be free.</p>
+          </details>
+        </div>
       </div>
 
       <TimeSpentSection insights={insights} noun={noun} options={options} />

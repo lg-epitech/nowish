@@ -1,8 +1,9 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, lt, or } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { getOwnedRoutine } from "@/db/routines";
 import { observations, sessions, type ObservationRow } from "@/db/schema";
+import { encodeHistoryCursor, type HistoryCursor } from "@/lib/history-cursor";
 import { zonedParts } from "@/lib/time";
 import { MAX_OBSERVATIONS_READ, type Observation } from "@/lib/types";
 import type { CreateObservationInput, UpdateObservationInput } from "@/lib/validation";
@@ -28,20 +29,40 @@ function momentFields(observedAt: Date, timezone: string) {
   return { observedAt, timezone, ...zonedParts(observedAt, timezone) };
 }
 
-export async function listObservations(userId: string, routineId: string) {
+export async function listObservations(
+  userId: string,
+  routineId: string,
+  cursor: HistoryCursor | null = null,
+) {
   const routine = await getOwnedRoutine(userId, routineId);
   if (!routine) return null;
 
   const rows = await getDb()
     .select()
     .from(observations)
-    .where(and(eq(observations.routineId, routineId), eq(observations.userId, userId)))
+    .where(
+      and(
+        eq(observations.routineId, routineId),
+        eq(observations.userId, userId),
+        cursor
+          ? or(
+              lt(observations.observedAt, cursor.at),
+              and(eq(observations.observedAt, cursor.at), lt(observations.id, cursor.id)),
+            )
+          : undefined,
+      ),
+    )
     .orderBy(desc(observations.observedAt), desc(observations.id))
     .limit(MAX_OBSERVATIONS_READ + 1);
 
+  const page = rows.slice(0, MAX_OBSERVATIONS_READ);
+  const truncated = rows.length > MAX_OBSERVATIONS_READ;
+  const last = page.at(-1);
+
   return {
-    observations: rows.slice(0, MAX_OBSERVATIONS_READ).map(toObservation),
-    truncated: rows.length > MAX_OBSERVATIONS_READ,
+    observations: page.map(toObservation),
+    truncated,
+    nextCursor: truncated && last ? encodeHistoryCursor(last.observedAt, last.id) : null,
   };
 }
 

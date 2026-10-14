@@ -1,8 +1,9 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, lt, or } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { getOwnedRoutine } from "@/db/routines";
 import { sessions, type SessionRow } from "@/db/schema";
+import { encodeHistoryCursor, type HistoryCursor } from "@/lib/history-cursor";
 import { zonedParts } from "@/lib/time";
 import { MAX_SESSIONS_READ, type Session } from "@/lib/types";
 import type { CreateSessionInput, UpdateSessionInput } from "@/lib/validation";
@@ -47,20 +48,40 @@ function localFields(startedAt: Date, timezone: string) {
   };
 }
 
-export async function listSessions(userId: string, routineId: string) {
+export async function listSessions(
+  userId: string,
+  routineId: string,
+  cursor: HistoryCursor | null = null,
+) {
   const routine = await getOwnedRoutine(userId, routineId);
   if (!routine) return null;
 
   const rows = await getDb()
     .select()
     .from(sessions)
-    .where(and(eq(sessions.routineId, routineId), eq(sessions.userId, userId)))
+    .where(
+      and(
+        eq(sessions.routineId, routineId),
+        eq(sessions.userId, userId),
+        cursor
+          ? or(
+              lt(sessions.startedAt, cursor.at),
+              and(eq(sessions.startedAt, cursor.at), lt(sessions.id, cursor.id)),
+            )
+          : undefined,
+      ),
+    )
     .orderBy(desc(sessions.startedAt), desc(sessions.id))
     .limit(MAX_SESSIONS_READ + 1);
 
+  const page = rows.slice(0, MAX_SESSIONS_READ);
+  const truncated = rows.length > MAX_SESSIONS_READ;
+  const last = page.at(-1);
+
   return {
-    sessions: rows.slice(0, MAX_SESSIONS_READ).map(toSession),
-    truncated: rows.length > MAX_SESSIONS_READ,
+    sessions: page.map(toSession),
+    truncated,
+    nextCursor: truncated && last ? encodeHistoryCursor(last.startedAt, last.id) : null,
   };
 }
 

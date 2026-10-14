@@ -192,17 +192,17 @@ export function LogPanel({
       </MomentField>
 
       <FeelField
-        legend="How was the timing?"
+        legend="How congested was the area when you started?"
         value={feel}
         onChange={setFeel}
         optional
-        hint="Optional. Ratings teach Nowish which hours suit you best."
+        hint="Optional. Clear means usable, some congestion means uncertain, and busy means unavailable."
       />
 
       {onConvert ? (
         converting ? (
           <div className="convert" role="group" aria-label="Save as a check instead">
-            <span>How did it look at {formatClock(finishesAt, options)}?</span>
+            <span>How congested was it at {formatClock(finishesAt, options)}?</span>
             <div className="chips">
               {FEEL_OPTIONS.map((option) => (
                 <button key={option.id} type="button" className="chip" disabled={saving} onClick={() => convert(option.id, Date.now())}>

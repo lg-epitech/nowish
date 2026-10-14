@@ -6,7 +6,7 @@ import { useState } from "react";
 import { formatMinuteOfDay, formatMinutes } from "@/lib/format";
 import type { Observation, Session } from "@/lib/types";
 
-const FEEL_LABELS = { good: "Good timing", okay: "Okay timing", bad: "Bad timing" } as const;
+const FEEL_LABELS = { good: "Clear", okay: "Some congestion", bad: "Busy" } as const;
 const PAGE = 14;
 
 type Entry =
@@ -124,7 +124,7 @@ export function History({
       <header className="section__head section__head--row">
         <div>
           <h2 id="history-title">History</h2>
-          <p>Times are shown where each one happened. Checks shape timing only.</p>
+          <p>Times are shown where each one happened. Rated sessions and checks both inform congestion.</p>
         </div>
         <button
           type="button"

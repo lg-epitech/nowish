@@ -41,6 +41,36 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+async function requestHistory<
+  Entry extends { id: string },
+  Page extends { truncated: boolean; nextCursor?: string | null },
+>(path: string, entriesFrom: (page: Page) => Entry[]): Promise<Entry[]> {
+  const entries: Entry[] = [];
+  const seenIds = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+
+  do {
+    const page: Page = await request<Page>(cursor ? `${path}?cursor=${encodeURIComponent(cursor)}` : path);
+
+    for (const entry of entriesFrom(page)) {
+      // An entry edited while history loads can move between pages.
+      if (!seenIds.has(entry.id)) {
+        entries.push(entry);
+        seenIds.add(entry.id);
+      }
+    }
+
+    cursor = page.nextCursor ?? null;
+    if ((page.truncated && !cursor) || (cursor && seenCursors.has(cursor))) {
+      throw new ApiError("Unable to load the complete history. Refresh and try again.", 502);
+    }
+    if (cursor) seenCursors.add(cursor);
+  } while (cursor);
+
+  return entries;
+}
+
 type RoutineBody = Omit<CreateRoutineInput, "timezone">;
 type SessionBody = Omit<CreateSessionInput, "source"> & { source?: CreateSessionInput["source"] };
 
@@ -52,7 +82,14 @@ export const api = {
   updateRoutine: (id: string, body: UpdateRoutineInput) =>
     request<{ routine: Routine }>(`/api/routines/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteRoutine: (id: string) => request<void>(`/api/routines/${id}`, { method: "DELETE" }),
-  listSessions: (routineId: string) => request<SessionsResponse>(`/api/routines/${routineId}/sessions`),
+  listSessions: async (routineId: string): Promise<SessionsResponse> => ({
+    sessions: await requestHistory<Session, SessionsResponse>(
+      `/api/routines/${routineId}/sessions`,
+      (page) => page.sessions,
+    ),
+    truncated: false,
+    nextCursor: null,
+  }),
   createSession: (routineId: string, body: SessionBody) =>
     request<{ session: Session }>(`/api/routines/${routineId}/sessions`, {
       method: "POST",
@@ -66,8 +103,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  listObservations: (routineId: string) =>
-    request<ObservationsResponse>(`/api/routines/${routineId}/observations`),
+  listObservations: async (routineId: string): Promise<ObservationsResponse> => ({
+    observations: await requestHistory<Observation, ObservationsResponse>(
+      `/api/routines/${routineId}/observations`,
+      (page) => page.observations,
+    ),
+    truncated: false,
+    nextCursor: null,
+  }),
   createObservation: (routineId: string, body: CreateObservationInput) =>
     request<{ observation: Observation }>(`/api/routines/${routineId}/observations`, {
       method: "POST",

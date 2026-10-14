@@ -7,9 +7,9 @@ import { MS_PER_MINUTE, zonedParts } from "@/lib/time";
 import type { Feel } from "@/lib/types";
 
 export const FEEL_OPTIONS: { id: Feel; label: string }[] = [
-  { id: "good", label: "Good" },
-  { id: "okay", label: "Okay" },
-  { id: "bad", label: "Bad" },
+  { id: "good", label: "Clear" },
+  { id: "okay", label: "Some congestion" },
+  { id: "bad", label: "Busy" },
 ];
 
 const MOMENT_OPTIONS = [

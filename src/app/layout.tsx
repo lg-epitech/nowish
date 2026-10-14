@@ -16,7 +16,7 @@ export const metadata: Metadata = {
     template: "%s | Nowish",
   },
   description:
-    "Log how long things actually take. Nowish learns your rhythm and tells you whether now is a good time to shower, do laundry, or anything else.",
+    "Report congestion and see an estimated chance that your shared shower, laundry area, or gym will be usable. Nowish learns from every rated entry.",
 };
 
 export const viewport: Viewport = {

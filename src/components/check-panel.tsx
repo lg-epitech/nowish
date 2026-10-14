@@ -70,7 +70,7 @@ export function CheckPanel({
         <h2 id={`${id}-title`} className="panel__title">
           Edit check
         </h2>
-        <p className="field__hint check-panel__lede">A look without doing it. It shapes timing, never your {noun} rhythm.</p>
+        <p className="field__hint check-panel__lede">A congestion report without doing it. It teaches the score, never your {noun} rhythm.</p>
       </div>
 
       <MomentField
@@ -81,7 +81,7 @@ export function CheckPanel({
         timeZone={options.timeZone}
       />
 
-      <FeelField legend="How did it look?" value={feel} onChange={(next) => next && setFeel(next)} />
+      <FeelField legend="How congested was the area?" value={feel} onChange={(next) => next && setFeel(next)} />
 
       {error ? (
         <p className="form-error" role="alert">
