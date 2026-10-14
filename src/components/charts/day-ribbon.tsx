@@ -7,7 +7,6 @@ import {
   formatHourLabel,
   formatMoment,
   formatWeekday,
-  KIND_LABELS,
   type FormatOptions,
 } from "@/lib/format";
 import { indexAt, type Forecast, type Verdict } from "@/lib/insights";
@@ -19,6 +18,13 @@ import { TableView } from "./table-view";
 const PLOT_HEIGHT = 128;
 const AXIS_HEIGHT = 26;
 const TOP = 28;
+
+const EVIDENCE_LABELS = {
+  none: "No comparable evidence",
+  low: "Limited evidence",
+  moderate: "Moderate evidence",
+  high: "Strong evidence",
+};
 
 interface Tick {
   x: number;
@@ -55,7 +61,7 @@ function ticksFor(forecast: Forecast, width: number, options: FormatOptions): Ti
 }
 
 /**
- * How good each moment of the coming day (or week) looks, with the checked
+ * Estimated usability across the coming day, with the checked
  * moment as a needle. The overlaid range input makes it draggable and
  * keyboard-accessible without custom key handling.
  */
@@ -78,13 +84,12 @@ export function DayRibbon({
 }) {
   const [ref, width] = useElementWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
-  const { horizonSteps, stepMinutes } = forecast;
+  const { horizonSteps } = forecast;
   const shown = forecast.points.slice(0, horizonSteps + 1);
-  const max = Math.max(0.05, ...shown.map((point) => point.score));
   const span = Math.max(1, shown[shown.length - 1].at - forecast.from);
   const toX = (ms: number) => Math.min(width, Math.max(0, ((ms - forecast.from) / span) * width));
   const x = (index: number) => toX(forecast.points[index].at);
-  const y = (score: number) => PLOT_HEIGHT - (score / max) * (PLOT_HEIGHT - TOP);
+  const y = (score: number) => PLOT_HEIGHT - score * (PLOT_HEIGHT - TOP);
 
   const line = `M${shown.map((point, index) => `${x(index).toFixed(1)} ${y(point.score).toFixed(1)}`).join("L")}`;
   const area = `${line}L${width} ${PLOT_HEIGHT}L0 ${PLOT_HEIGHT}Z`;
@@ -94,19 +99,18 @@ export function DayRibbon({
   const hovered = hover === null ? null : verdictAt(hover);
   const selectedPoint = forecast.points[selected];
   const describe = (item: Verdict) =>
-    `${formatMoment(item.at, forecast.from, options)}: ${KIND_LABELS[item.kind].toLowerCase()}`;
+    `${formatMoment(item.at, forecast.from, options)}: ${Math.round(item.point.score * 100)}% estimated chance usable, ${EVIDENCE_LABELS[item.point.congestion.confidence].toLowerCase()}`;
 
   const tableRows = useMemo(() => {
-    // Hourly rows for a day, six-hourly rows for a week.
+    // Hourly rows, with the full estimate still available through the slider.
     const every = 12;
     const rows: string[][] = [];
     for (let index = 0; index <= horizonSteps; index += every) {
       const item = verdictAt(index);
       rows.push([
         formatMoment(item.at, forecast.from, options),
-        KIND_LABELS[item.kind],
-        `${Math.round(item.point.readiness * 100)}%`,
-        `${Math.round(item.point.habit * 100)}%`,
+        `${Math.round(item.point.score * 100)}%`,
+        EVIDENCE_LABELS[item.point.congestion.confidence],
       ]);
     }
     return rows;
@@ -116,6 +120,12 @@ export function DayRibbon({
     <figure className="ribbon">
       <div className="ribbon__plot" ref={ref}>
         <svg width={width} height={PLOT_HEIGHT + AXIS_HEIGHT} aria-hidden="true">
+          {[0, 0.5, 1].map((score) => (
+            <g key={score} className="chart__axis">
+              <line className="chart__grid" x1={0} x2={width} y1={y(score)} y2={y(score)} />
+              <text x={width - 2} y={y(score) - 5} textAnchor="end">{score * 100}%</text>
+            </g>
+          ))}
           {goodWindow ? (
             <rect
               className="ribbon__window"
@@ -178,20 +188,20 @@ export function DayRibbon({
           <ChartTooltip
             x={x(hover)}
             width={width}
-            value={KIND_LABELS[hovered.kind]}
-            label={formatMoment(hovered.at, forecast.from, options)}
+            value={`${Math.round(hovered.point.score * 100)}% chance usable`}
+            label={`${formatMoment(hovered.at, forecast.from, options)} · ${EVIDENCE_LABELS[hovered.point.congestion.confidence].toLowerCase()}`}
           />
         ) : null}
       </div>
 
       <figcaption className="ribbon__caption">
-        {stepMinutes <= 5 ? "The next 24 hours" : "The next 7 days"}. Higher means a better moment; the shaded band is the
-        good window. Drag across it to check another time.
+        The next 24 hours, on a fixed 0–100% scale. Higher means more likely usable; the shaded band is a favorable
+        window. Drag across it to check another time.
       </figcaption>
 
       <TableView
-        caption={`How good each moment looks for ${noun}`}
-        columns={["Time", "Verdict", "Ready", "Time of day"]}
+        caption={`Estimated chance usable for ${noun}`}
+        columns={["Time", "Chance usable", "Evidence"]}
         rows={tableRows}
       />
     </figure>

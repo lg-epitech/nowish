@@ -204,7 +204,7 @@ export function Dashboard() {
       {!selected && form !== "new" ? (
         <div className="empty">
           <h1>Nothing to check yet</h1>
-          <p>Add something you do on a rhythm, like showers or laundry, and Nowish will learn when it suits you.</p>
+          <p>Add an activity, like showers or laundry, then report congestion to learn when the area is likely to be usable.</p>
           <button type="button" className="btn btn--primary" onClick={() => setForm("new")}>
             <Plus size={16} aria-hidden="true" />
             Track something

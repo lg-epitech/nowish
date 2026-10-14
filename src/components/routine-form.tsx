@@ -143,7 +143,7 @@ export function RoutineForm({
           ))}
           {!cadenceKnown ? <span className="chip chip--on">Every {values.cadenceHours} h</span> : null}
         </div>
-        <p className="field__hint">A starting guess. Your logged sessions take over as they add up.</p>
+        <p className="field__hint">For your activity statistics. This does not affect the congestion score.</p>
       </fieldset>
 
       <label className="field field--inline">

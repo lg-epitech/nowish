@@ -46,8 +46,8 @@ function weightedMedian(sessions: readonly PreparedSession[]) {
 function histogram(minutes: readonly number[]) {
   if (minutes.length === 0) return [];
 
-  const low = Math.min(...minutes);
-  const high = Math.max(...minutes);
+  const low = minutes.reduce((low, value) => Math.min(low, value), Infinity);
+  const high = minutes.reduce((high, value) => Math.max(high, value), -Infinity);
   const width = niceBinWidth(Math.max(1, high - low), 10);
   const start = Math.floor(low / width) * width;
   const binCount = Math.max(1, Math.floor((high - start) / width) + 1);
@@ -134,8 +134,8 @@ export function computeTimeSpent(sessions: readonly PreparedSession[], now: numb
     typicalMinutes: weightedMedian(sessions),
     rangeMinutes: q25 === null || q75 === null ? null : [q25, q75],
     meanMinutes: mean(minutes),
-    shortestMinutes: minutes.length ? Math.min(...minutes) : null,
-    longestMinutes: minutes.length ? Math.max(...minutes) : null,
+    shortestMinutes: minutes.length ? minutes.reduce((low, value) => Math.min(low, value), Infinity) : null,
+    longestMinutes: minutes.length ? minutes.reduce((high, value) => Math.max(high, value), -Infinity) : null,
     last,
     trend,
     totalMinutes: sum(minutes),

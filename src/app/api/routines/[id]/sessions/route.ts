@@ -1,10 +1,11 @@
 import { createSession, listSessions } from "@/db/sessions";
+import { InvalidHistoryCursorError, parseHistoryCursor } from "@/lib/history-cursor";
 import { error, json, parseBody, parseId, requireUser, serverError } from "@/lib/http";
 import { createSessionSchema, idSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, ctx: RouteContext<"/api/routines/[id]/sessions">) {
+export async function GET(request: Request, ctx: RouteContext<"/api/routines/[id]/sessions">) {
   const user = await requireUser();
   if ("response" in user) return user.response;
 
@@ -12,9 +13,11 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/routines/[i
   if (!id) return error("Invalid routine id", 400);
 
   try {
-    const page = await listSessions(user.userId, id);
+    const cursor = parseHistoryCursor(new URL(request.url).searchParams.get("cursor"));
+    const page = await listSessions(user.userId, id, cursor);
     return page ? json(page) : error("Routine not found", 404);
   } catch (cause) {
+    if (cause instanceof InvalidHistoryCursorError) return error(cause.message, 400);
     return serverError("Failed to list sessions", cause, "Unable to load sessions");
   }
 }

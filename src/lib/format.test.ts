@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import type { Verdict } from "@/lib/insights";
+
 import {
   formatDelta,
   formatDuration,
@@ -10,6 +12,7 @@ import {
   formatMoment,
   reasonText,
   relativeDay,
+  verdictSummary,
 } from "./format";
 
 const options = { timeZone: "UTC", locale: "en-US" };
@@ -61,37 +64,54 @@ describe("moments", () => {
 });
 
 describe("reasons", () => {
-  it("explains readiness in plain sentences", () => {
-    expect(reasonText({ code: "too-soon", elapsedHours: 3, typicalGapHours: 24 }, options)).toBe(
-      "Last one was 3 h ago. You usually wait about 24 h.",
+  it("describes report evidence and weak support", () => {
+    expect(reasonText({ code: "reported-congestion", ratedCount: 40, supportingDays: 8 }, options)).toBe(
+      "All 40 ratings inform the estimate, with comparable reports on 8 days.",
     );
-    expect(reasonText({ code: "almost-due", elapsedHours: 22, typicalGapHours: 24 }, options)).toBe(
-      "Last one was 22 h ago, close to your usual 24 h.",
-    );
-    expect(reasonText({ code: "overdue", elapsedHours: 31, p90GapHours: 27 }, options)).toBe(
-      "Last one was 31 h ago. Nine in ten of your gaps are shorter than 27 h.",
-    );
+    expect(reasonText({ code: "reported-congestion", ratedCount: 40, supportingDays: 0 }, options)).toContain("little comparable evidence");
+    expect(reasonText({ code: "no-reports" }, options)).toBeNull();
   });
 
-  it("quotes what your checks found", () => {
-    expect(reasonText({ code: "just-checked", feel: "bad", at: Date.parse("2026-09-24T07:45:00Z") }, options)).toBe(
-      "You checked at 7:45 AM and it was a bad time.",
+  it("quotes congestion without promising occupancy", () => {
+    expect(reasonText({ code: "recent-report", feel: "bad", at: Date.parse("2026-09-24T07:45:00Z") }, options)).toBe(
+      "Recent reports around 7:45 AM suggest the area is busy. Their influence fades with time.",
     );
-    expect(reasonText({ code: "just-checked", feel: "okay", at: Date.parse("2026-09-24T07:45:00Z") }, options)).toBe(
-      "You checked at 7:45 AM and it was okay.",
-    );
-    expect(reasonText({ code: "checks-near", feel: "bad", count: 3, total: 4 }, options)).toBe(
-      "3 of your 4 recent checks around this time found a bad time.",
-    );
-    expect(reasonText({ code: "checks-near", feel: "good", count: 2, total: 2 }, options)).toBe(
-      "All 2 of your recent checks around this time found a good time.",
-    );
+    expect(reasonText({ code: "recent-report", feel: "okay", at: now }, options)).toContain("uncertain or partly congested");
+    expect(reasonText({ code: "recent-report", feel: "okay", at: now, conflicted: true, reportCount: 2 }, options)).toContain("Recent reports are mixed");
   });
 
-  it("only promises a finish time when now is a good time", () => {
-    expect(reasonText({ code: "takes", minutes: 12, doneBy: null }, options)).toBe("It takes you about 12 min.");
-    expect(reasonText({ code: "takes", minutes: 12, doneBy: Date.parse("2026-09-24T20:12:00Z") }, options)).toBe(
-      "It takes you about 12 min, so you’d be done by 8:12 PM.",
-    );
+  it("keeps duration separate from availability", () => {
+    expect(reasonText({ code: "takes", minutes: 12, doneBy: null }, options)).toBe("A session usually takes about 12 min.");
+    expect(reasonText({ code: "takes", minutes: 12, doneBy: now }, options)).toBe("A session usually takes about 12 min.");
+  });
+});
+
+describe("congestion summaries", () => {
+  function estimate(confidence: "low" | "moderate", bestAt = now): Verdict {
+    return {
+      kind: "nowish", at: now, bestAt, window: null, expectedMinutes: 10,
+      reasons: [{ code: "reported-congestion", ratedCount: 20, supportingDays: confidence === "low" ? 1 : 8 }],
+      point: {
+        at: now, localMinute: 1200, localWeekday: 4, score: 0.5, live: null,
+        congestion: {
+          probability: 0.5, confidence, effectiveReports: confidence === "low" ? 1 : 6,
+          supportingDays: confidence === "low" ? 1 : 8, live: null,
+        },
+      },
+    };
+  }
+
+  it("keeps the weak-current-evidence caveat when suggesting a supported later time", () => {
+    const summary = verdictSummary(estimate("low", now + 60 * 60_000), now, options);
+    expect(summary).toBe("Limited comparable reports for this time. A better chance is estimated around 9:00 PM.");
+  });
+
+  it("describes insufficient evidence without claiming that congestion cannot improve", () => {
+    const limited = verdictSummary(estimate("low"), now, options);
+    expect(limited).toContain("not enough evidence to recommend a better time");
+    expect(limited).not.toContain("No clear improvement");
+    const busy = estimate("moderate");
+    busy.kind = "later";
+    expect(verdictSummary(busy, now, options)).toContain("available reports do not support a specific better time");
   });
 });

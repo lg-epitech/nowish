@@ -12,6 +12,11 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
+/** Refresh after saving so report timestamps never run ahead of the model clock. */
+export function refreshNow() {
+  emit();
+}
+
 function schedule() {
   clearTimeout(timeout);
   timeout = setTimeout(() => {

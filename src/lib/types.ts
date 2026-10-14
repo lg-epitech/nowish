@@ -37,10 +37,10 @@ export const CADENCES = [
 
 export const MAX_ROUTINES = 24;
 
-/** The most recent sessions the insights engine reads for one routine. */
+/** Maximum sessions per API page; the client follows cursors to read the full history. */
 export const MAX_SESSIONS_READ = 1500;
 
-/** The most recent checks the insights engine reads for one routine. */
+/** Maximum checks per API page; the client follows cursors to read the full history. */
 export const MAX_OBSERVATIONS_READ = 1500;
 
 export interface Routine {
@@ -75,8 +75,8 @@ export interface Session {
 }
 
 /**
- * A check without doing the thing: "I looked, and now would have been a good
- * (or bad) time." It teaches timing, never rhythm or time spent.
+ * A congestion report without a session. It teaches availability, never
+ * rhythm or time spent. Historical timing ratings are availability proxies.
  */
 export interface Observation {
   id: string;
@@ -102,9 +102,11 @@ export interface RoutinesResponse {
 export interface SessionsResponse {
   sessions: Session[];
   truncated: boolean;
+  nextCursor?: string | null;
 }
 
 export interface ObservationsResponse {
   observations: Observation[];
   truncated: boolean;
+  nextCursor?: string | null;
 }

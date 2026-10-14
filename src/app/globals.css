@@ -392,7 +392,7 @@ a {
 }
 
 .segmented__option {
-  height: 38px;
+  min-height: 38px;
   padding: 0 14px;
   border-radius: 9px;
   color: var(--ink-2);
@@ -780,6 +780,39 @@ a {
   line-height: 0.92;
 }
 
+.hero__score-label {
+  margin-top: 24px;
+  color: var(--ink-2);
+  font-size: var(--step-0);
+  font-weight: 600;
+}
+
+.hero__verdict > span:last-child {
+  font-variant-numeric: tabular-nums;
+}
+
+.hero__score-meaning {
+  margin-top: 16px;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.hero__evidence {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.hero__evidence[data-confidence="high"] {
+  border-color: var(--water);
+  background: var(--water-wash);
+  color: var(--water-ink);
+}
+
 .signal {
   display: inline-block;
   width: 0.34em;
@@ -797,6 +830,14 @@ a {
 
 .hero[data-kind="nowish"] .signal {
   background: var(--signal-nowish);
+}
+
+.hero[data-kind="later"] .signal {
+  background: var(--danger);
+}
+
+.hero[data-confidence="none"] .signal {
+  background: var(--signal-later);
 }
 
 .hero__summary {
@@ -1189,6 +1230,29 @@ a {
   font-size: var(--step--1);
 }
 
+.why__evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.score-details {
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.score-details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.score-details p {
+  max-width: 62ch;
+  margin-top: 10px;
+}
+
 /* Stats sections */
 
 .section {
@@ -1511,6 +1575,17 @@ a {
 
   .hero__summary {
     font-size: var(--step-1);
+  }
+
+  .segmented {
+    width: 100%;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+
+  .segmented__option {
+    padding: 6px 8px;
+    font-size: 0.875rem;
+    line-height: 1.2;
   }
 
   .actions .btn--large {

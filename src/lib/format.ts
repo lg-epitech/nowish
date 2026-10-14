@@ -1,4 +1,5 @@
 import type { Reason, Verdict, VerdictKind } from "@/lib/insights";
+import { hasComparableEvidence } from "@/lib/insights/forecast";
 import { daysBetween, zonedParts } from "@/lib/time";
 import type { Feel } from "@/lib/types";
 
@@ -124,98 +125,64 @@ export function formatDelta(deltaMinutes: number) {
 }
 
 export const HEADLINES: Record<VerdictKind, string> = {
-  now: "Yes, now.",
-  nowish: "Nowish.",
-  later: "Not now.",
+  now: "Likely usable",
+  nowish: "Uncertain",
+  later: "Likely busy",
 };
 
 export const FEEL_LABELS: Record<Feel, string> = {
-  good: "Good time",
-  okay: "Okay",
-  bad: "Bad time",
+  good: "Clear",
+  okay: "Some congestion",
+  bad: "Busy",
 };
-
-/** "a good time", "okay", "a bad time": what a rating found, mid-sentence. */
-function feelPhrase(feel: Feel) {
-  return feel === "okay" ? "okay" : `a ${feel} time`;
-}
 
 export const KIND_LABELS: Record<VerdictKind, string> = {
-  now: "Good time",
-  nowish: "Soon",
-  later: "Not now",
+  now: "Likely usable",
+  nowish: "Uncertain",
+  later: "Likely busy",
 };
 
-/** One line under the headline: what to do, and when. */
+/** Explain the estimate without turning an uncertain forecast into a promise. */
 export function verdictSummary(verdict: Verdict, now: number, options: FormatOptions) {
-  const codes = verdict.reasons.map((reason) => reason.code);
-
-  if (codes.includes("first-time")) return "Any time works. Log one and Nowish starts learning your rhythm.";
-
-  if (verdict.kind === "now") {
-    if (codes.includes("overdue")) return "It has been longer than usual, so don’t wait for a better moment.";
-    const checked = verdict.reasons.find((reason) => reason.code === "just-checked");
-    const looked = checked ? `It looked ${checked.feel} when you checked.` : null;
-    if (verdict.window && verdict.window.to - verdict.at >= 15 * 60_000) {
-      const until = `Good until about ${formatClock(verdict.window.to, options)}.`;
-      return looked ? `${looked} ${until}` : until;
-    }
-    if (looked) return looked;
-    if (codes.includes("off-hours")) return "Not your usual time, but you’re due and nothing better is coming up soon.";
-    return "This is one of your usual times.";
+  if (verdict.reasons.some((reason) => reason.code === "no-reports")) {
+    return "50% is a neutral starting point. Add a congestion report to start learning.";
   }
-
-  const minutes = Math.round((verdict.bestAt - verdict.at) / 60_000);
-
-  if (verdict.kind === "nowish") {
-    return `Better in ${formatMinutes(minutes)}, around ${formatClock(verdict.bestAt, options)}.`;
+  const limited = !hasComparableEvidence(verdict.point.congestion);
+  if (verdict.bestAt > verdict.at) {
+    return `${limited ? "Limited comparable reports for this time. " : ""}A better chance is estimated around ${formatMoment(verdict.bestAt, now, options)}.`;
   }
-
-  if (verdict.window && verdict.window.to > verdict.window.from) {
-    const day = relativeDay(verdict.window.from, now, options);
-    const range = formatClockRange(verdict.window.from, verdict.window.to, options);
-    return `Next good window: ${day === "today" ? "" : `${day} `}${range}.`;
+  const live = verdict.point.live;
+  const usefulLive = live && live.strength >= 0.2 && !live.conflicted && live.feel !== "okay";
+  if (limited && !usefulLive) {
+    return "Limited comparable reports. Treat this as a rough estimate; there is not enough evidence to recommend a better time.";
   }
-
-  return `Next good time: ${formatMoment(verdict.bestAt, now, options)}.`;
+  if (verdict.kind === "now") return limited
+    ? "Recent reports suggest the area is usable now. Comparable historical evidence remains limited."
+    : "Reports suggest the area is likely to be usable at this time.";
+  if (verdict.kind === "later") return limited
+    ? "Recent reports suggest the area is busy now. There are too few comparable reports to recommend a better time."
+    : "Reports suggest the area is likely to be busy. The available reports do not support a specific better time in the next 24 hours.";
+  return "The reports do not give a clear answer for this time.";
 }
 
-/** Why the verdict came out this way, one plain sentence per reason. */
+/** Why the estimate came out this way, one plain sentence per reason. */
 export function reasonText(reason: Reason, options: FormatOptions): string | null {
   switch (reason.code) {
-    case "first-time":
+    case "no-reports":
       return null;
-    case "too-soon":
-      return `Last one was ${formatGap(reason.elapsedHours)} ago. You usually wait about ${formatGap(reason.typicalGapHours)}.`;
-    case "almost-due":
-      return reason.elapsedHours >= reason.typicalGapHours * 0.85
-        ? `Last one was ${formatGap(reason.elapsedHours)} ago, close to your usual ${formatGap(reason.typicalGapHours)}.`
-        : `Last one was ${formatGap(reason.elapsedHours)} ago. You usually wait about ${formatGap(reason.typicalGapHours)}.`;
-    case "due":
-      return reason.elapsedHours > reason.typicalGapHours * 1.15
-        ? `Last one was ${formatGap(reason.elapsedHours)} ago, a bit past your usual ${formatGap(reason.typicalGapHours)}.`
-        : `Last one was ${formatGap(reason.elapsedHours)} ago, right on your usual gap.`;
-    case "overdue":
-      return `Last one was ${formatGap(reason.elapsedHours)} ago. Nine in ten of your gaps are shorter than ${formatGap(reason.p90GapHours)}.`;
-    case "usual-time":
-      return `You usually start around ${formatMinuteOfDay(reason.peakMinute, options.locale)}.`;
-    case "off-hours":
-      return `Not your usual time. You usually start around ${formatMinuteOfDay(reason.peakMinute, options.locale)}.`;
-    case "usual-day":
-      return `${formatWeekday(reason.weekday, "long", options.locale)}s are one of your usual days.`;
-    case "unusual-day":
-      return `You rarely do this on ${formatWeekday(reason.weekday, "long", options.locale)}s.`;
-    case "just-checked":
-      return `You checked at ${formatClock(reason.at, options)} and it was ${feelPhrase(reason.feel)}.`;
-    case "checks-near": {
-      const found = reason.feel === "okay" ? "found it okay" : `found ${feelPhrase(reason.feel)}`;
-      return reason.count === reason.total
-        ? `All ${reason.total} of your recent checks around this time ${found}.`
-        : `${reason.count} of your ${reason.total} recent checks around this time ${found}.`;
+    case "reported-congestion":
+      return reason.supportingDays === 0
+        ? `All ${reason.ratedCount} ratings inform the baseline, but there is little comparable evidence around this hour.`
+        : `All ${reason.ratedCount} ratings inform the estimate, with comparable reports on ${reason.supportingDays} ${reason.supportingDays === 1 ? "day" : "days"}.`;
+    case "recent-report": {
+      const when = formatClock(reason.at, options);
+      if (reason.conflicted) return "Recent reports are mixed. Current congestion is uncertain; their influence fades with time.";
+      const state = reason.feel === "good" ? "clear" : reason.feel === "bad" ? "busy" : "uncertain or partly congested";
+      return `Recent reports around ${when} suggest the area is ${state}. Their influence fades with time.`;
     }
     case "takes":
-      return reason.doneBy === null
-        ? `It takes you about ${formatMinutes(reason.minutes)}.`
-        : `It takes you about ${formatMinutes(reason.minutes)}, so you’d be done by ${formatClock(reason.doneBy, options)}.`;
+      // Duration is useful context, but availability at the start cannot
+      // guarantee a finish time or an uninterrupted session.
+      return `A session usually takes about ${formatMinutes(reason.minutes)}.`;
   }
 }
